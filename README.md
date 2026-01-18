@@ -1,0 +1,75 @@
+# keyemu
+
+`keyemu` turns the Waveshare RP2350-USB-A into a wired keyboard emulator. It
+listens for key events over a USB CDC serial connection and emits HID keyboard
+reports on the PIO USB port, letting one host drive keyboard input on another.
+
+## Build
+
+1. Install toolchain dependencies:
+   - CMake
+   - Ninja
+   - GNU Arm Embedded toolchain (`arm-none-eabi-gcc`)
+
+2. Initialize submodules:
+```
+git submodule update --init --recursive
+```
+
+3. Build:
+```
+mkdir build
+cd build
+cmake ..
+ninja
+```
+
+UF2 output is in `build/` (e.g. `build/keyemu.uf2`).
+
+## Flash
+
+1. Hold **BOOT** and connect the board over USB-C.
+2. A mass-storage device appears (BOOTSEL).
+3. Copy `keyemu.uf2` to the BOOTSEL drive.
+
+## Wiring checklist
+
+- PIO USB uses GPIO12 (D+) and GPIO13 (D-).
+- USB-A port VBUS must be isolated from VSYS (cut trace between USB1.VBUS and VSYS).
+- D+ pull-up should be present; D- pull-up should be absent.
+- Use a straight-through USB-A breakout cable (verify pin order with a meter).
+
+## Serial protocol
+
+The CDC interface expects a fixed 2-byte packet:
+
+- **Byte 0**: USB HID keycode
+- **Byte 1**: modifier bitmap
+
+USB HID keyboard keycodes are defined in the HID Usage Tables (Keyboard/Keypad page)
+and in TinyUSB’s `hid.h` constants.
+- HID Usage Tables (Keyboard/Keypad): https://usb.org/sites/default/files/hut1_4.pdf
+- TinyUSB keycode definitions: https://github.com/hathach/tinyusb/blob/6e891c6dc716d6ae91fdc54aaec2899f788e14fc/src/class/hid/hid.h#L389-L391
+
+Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
+
+- `0x01` Left Ctrl (⌃)
+- `0x02` Left Shift (⇧)
+- `0x04` Left Alt / Option (⌥)
+- `0x08` Left GUI / Command (⌘)
+- `0x10` Right Ctrl (⌃)
+- `0x20` Right Shift (⇧)
+- `0x40` Right Alt / Option (⌥)
+- `0x80` Right GUI / Command (⌘)
+
+Each packet generates a key press followed by a key release.
+
+## HID report descriptor
+
+The PIO USB device uses the TinyUSB keyboard descriptor:
+`TUD_HID_REPORT_DESC_KEYBOARD()` (boot keyboard report).
+
+## Runtime behavior
+
+Each 2-byte serial packet is converted into a single HID keyboard report on the
+PIO USB interface. This supports modifier keys for midimapper integration.
