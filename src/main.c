@@ -335,12 +335,18 @@ int main(void) {
     static bool last_rx_time_valid = false;
 
     // Drain queued packets into the multicore FIFO when space is available.
+    // Use timeout to avoid blocking indefinitely if core1 stops consuming.
     while (multicore_fifo_wready()) {
       uint16_t packed;
       if (!key_queue_pop(&packed)) {
         break;
       }
-      multicore_fifo_push_blocking((uint32_t)packed);
+      if (!multicore_fifo_push_timeout_us((uint32_t)packed, 100000)) {
+        // Core1 not consuming; watchdog will handle if it persists.
+        // Drop the packet rather than reorder by re-queuing at wrong position.
+        LOG_DEBUG("FIFO push timeout, packet dropped");
+        break;
+      }
     }
 
     bool connected = tud_cdc_connected();
