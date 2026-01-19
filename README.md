@@ -22,12 +22,14 @@ flowchart TD
 git submodule update --init --recursive
 ```
 
-3. Build:
+3. Configure:
 ```
-mkdir build
-cd build
-cmake ..
-ninja
+cmake -S . -B build
+```
+
+4. Build:
+```
+cmake --build build
 ```
 
 UF2 output is in `build/` (e.g. `build/keyemu.uf2`).
