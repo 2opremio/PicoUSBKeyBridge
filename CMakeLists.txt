@@ -13,7 +13,7 @@ if (NOT PICO_BOARD)
   set(PICO_BOARD pico2 CACHE STRING "Pico board")
 endif ()
 
-project(keyemu C CXX ASM)
+project(PicoUSBKeyBridge C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
@@ -22,14 +22,14 @@ pico_sdk_init()
 set(PICO_PIO_USB_PATH ${CMAKE_CURRENT_LIST_DIR}/third_party/pico-pio-usb)
 add_subdirectory(${PICO_PIO_USB_PATH} pico_pio_usb)
 
-add_executable(keyemu
-  src/keyemu_log.c
+add_executable(PicoUSBKeyBridge
+  src/log.c
   src/main.c
   src/usb_descriptors.c
 )
 
-target_include_directories(keyemu PRIVATE src)
-target_link_libraries(keyemu PRIVATE
+target_include_directories(PicoUSBKeyBridge PRIVATE src)
+target_link_libraries(PicoUSBKeyBridge PRIVATE
   pico_stdlib
   pico_multicore
   hardware_pio
@@ -39,6 +39,6 @@ target_link_libraries(keyemu PRIVATE
   pico_pio_usb
 )
 
-pico_enable_stdio_uart(keyemu 0)
-pico_enable_stdio_usb(keyemu 0)
-pico_add_extra_outputs(keyemu)
+pico_enable_stdio_uart(PicoUSBKeyBridge 0)
+pico_enable_stdio_usb(PicoUSBKeyBridge 0)
+pico_add_extra_outputs(PicoUSBKeyBridge)

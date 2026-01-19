@@ -1,6 +1,6 @@
-# keyemu
+# PicoUSBKeyBridge
 
-`keyemu` turns the Waveshare RP2350-USB-A into a wired keyboard emulator. It
+`PicoUSBKeyBridge` turns the Waveshare RP2350-USB-A into a wired keyboard emulator. It
 listens for key events over a USB CDC serial connection and emits HID keyboard
 reports on the PIO USB port, letting one host drive keyboard input on another.
 
@@ -32,13 +32,13 @@ cmake -S . -B build
 cmake --build build
 ```
 
-UF2 output is in `build/` (e.g. `build/keyemu.uf2`).
+UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
 
 ## Flash
 
 1. Hold **BOOT** and connect the board over USB-C.
 2. A mass-storage device appears (BOOTSEL).
-3. Copy `keyemu.uf2` to the BOOTSEL drive.
+3. Copy `PicoUSBKeyBridge.uf2` to the BOOTSEL drive.
 
 ## Wiring checklist
 

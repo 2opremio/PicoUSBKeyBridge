@@ -1,5 +1,5 @@
 /*
- * TinyUSB configuration for keyemu.
+ * TinyUSB configuration for PicoUSBKeyBridge.
  */
 #ifndef _TUSB_CONFIG_H_
 #define _TUSB_CONFIG_H_
@@ -20,7 +20,7 @@
 #endif
 
 // Route TinyUSB debug logs to CDC TX.
-#define CFG_TUSB_DEBUG_PRINTF keyemu_tusb_debug_printf
+#define CFG_TUSB_DEBUG_PRINTF log_tusb_debug_printf
 
 #ifndef CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_SECTION

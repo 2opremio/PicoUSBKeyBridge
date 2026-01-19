@@ -83,10 +83,10 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index)
 char const* string_desc_arr [] =
 {
   (const char[]) { 0x09, 0x04 }, // 0: supported language is English (0x0409)
-  "keyemu",                      // 1: Manufacturer
-  "keyemu CDC",                  // 2: Product
+  "PicoUSBKeyBridge",            // 1: Manufacturer
+  "PicoUSBKeyBridge CDC",        // 2: Product
   "000000000001",                // 3: Serials (placeholder)
-  "keyemu CDC",                  // 4: CDC Interface
+  "PicoUSBKeyBridge CDC",        // 4: CDC Interface
 };
 
 static uint16_t _desc_str[32];

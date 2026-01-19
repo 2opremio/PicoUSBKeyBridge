@@ -5,7 +5,7 @@
  * This avoids sending into a closed port where the host may drop bytes.
  */
 
-#include "keyemu_log.h"
+#include "log.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,16 +18,16 @@
 // RP2350 has 520 KB SRAM; this log buffer consumes 16 KB.
 // Plenty of headroom remains for USB stacks and application state.
 // Larger buffer keeps more history when CDC is disconnected for long runs.
-#define KEYEMU_LOG_BUFFER_SIZE 16384
+#define PUSBKB_LOG_BUFFER_SIZE 16384
 
-static uint8_t log_buffer[KEYEMU_LOG_BUFFER_SIZE];
+static uint8_t log_buffer[PUSBKB_LOG_BUFFER_SIZE];
 static size_t log_head = 0;
 static size_t log_tail = 0;
 static size_t log_dropped_bytes = 0;
 static spin_lock_t *log_lock = NULL;
 static bool log_initialized = false;
 
-void keyemu_log_init(void) {
+void log_init(void) {
   if (!log_initialized) {
     int lock_num = spin_lock_claim_unused(true);
     log_lock = spin_lock_instance(lock_num);
@@ -38,12 +38,12 @@ void keyemu_log_init(void) {
 // Bytes of free space left in the ring buffer (one slot unused).
 static size_t log_free_space(void) {
   if (log_head >= log_tail) {
-    return KEYEMU_LOG_BUFFER_SIZE - (log_head - log_tail) - 1;
+    return PUSBKB_LOG_BUFFER_SIZE - (log_head - log_tail) - 1;
   }
   return (log_tail - log_head) - 1;
 }
 
-void keyemu_log_write(const char *data, size_t len) {
+void log_write(const char *data, size_t len) {
   if (data == NULL || len == 0 || !log_initialized) {
     return;
   }
@@ -58,7 +58,7 @@ void keyemu_log_write(const char *data, size_t len) {
 
   for (size_t i = 0; i < len; i++) {
     log_buffer[log_head] = (uint8_t)data[i];
-    log_head = (log_head + 1) % KEYEMU_LOG_BUFFER_SIZE;
+    log_head = (log_head + 1) % PUSBKB_LOG_BUFFER_SIZE;
   }
 
   spin_unlock(log_lock, save);
@@ -73,7 +73,7 @@ static size_t log_pop_chunk(uint8_t *out, size_t max_len) {
   size_t count = 0;
   while (log_tail != log_head && count < max_len) {
     out[count++] = log_buffer[log_tail];
-    log_tail = (log_tail + 1) % KEYEMU_LOG_BUFFER_SIZE;
+    log_tail = (log_tail + 1) % PUSBKB_LOG_BUFFER_SIZE;
   }
   return count;
 }
@@ -142,7 +142,7 @@ static void log_flush_available_chunks(void) {
   }
 }
 
-void keyemu_log_flush(void) {
+void log_flush(void) {
   if (!log_cdc_ready()) {
     return;
   }
@@ -156,7 +156,7 @@ void keyemu_log_flush(void) {
 }
 
 // TinyUSB debug printf hook (CFG_TUSB_DEBUG_PRINTF).
-int keyemu_tusb_debug_printf(const char *format, ...) {
+int log_tusb_debug_printf(const char *format, ...) {
   char buffer[256];
   va_list args;
   va_start(args, format);
@@ -171,6 +171,6 @@ int keyemu_tusb_debug_printf(const char *format, ...) {
     len = (int)(sizeof(buffer) - 1);
   }
 
-  keyemu_log_write(buffer, (size_t)len);
+  log_write(buffer, (size_t)len);
   return len;
 }

@@ -1,5 +1,5 @@
 /*
- * keyemu: CDC (native USB) -> HID keyboard (PIO USB)
+ * PicoUSBKeyBridge: CDC (native USB) -> HID keyboard (PIO USB)
  *
  * Core ownership:
  * - core1 runs the PIO USB device on the USB A port (host-side HID keyboard).
@@ -27,7 +27,7 @@
 
 #include "class/hid/hid_device.h"
 #include "device/usbd.h"
-#include "keyemu_log.h"
+#include "log.h"
 #include "pio_usb.h"
 #include "tusb.h"
 
@@ -36,9 +36,9 @@
 // --------------------------------------------------------------------
 
 static void cdc_log(const char *level, const char *message) {
-  keyemu_log_write(level, strlen(level));
-  keyemu_log_write(message, strlen(message));
-  keyemu_log_write("\r\n", 2);
+  log_write(level, strlen(level));
+  log_write(message, strlen(message));
+  log_write("\r\n", 2);
 }
 
 static void cdc_log_hex2(const char *prefix, uint8_t a, uint8_t b) {
@@ -49,14 +49,14 @@ static void cdc_log_hex2(const char *prefix, uint8_t a, uint8_t b) {
     if (write_len >= sizeof(buf)) {
       write_len = sizeof(buf) - 1;
     }
-    keyemu_log_write(buf, write_len);
+    log_write(buf, write_len);
   }
 }
 
 #define LOG_INFO(msg) cdc_log("INFO: ", (msg))
 #define LOG_WARN(msg) cdc_log("WARN: ", (msg))
 #define LOG_ERROR(msg) cdc_log("ERROR: ", (msg))
-#if KEYEMU_DEBUG
+#if PUSBKB_DEBUG
 #define LOG_DEBUG(msg) cdc_log("DEBUG: ", (msg))
 #define LOG_DEBUG_PKT(a, b) cdc_log_hex2("DEBUG: rx ", (a), (b))
 #else
@@ -132,8 +132,8 @@ static uint8_t const pio_desc_configuration[] = {
 
 static const char *pio_usb_string_descriptors_base[] = {
   [0] = (const char[]){0x09, 0x04},
-  [1] = "keyemu",
-  [2] = "keyemu PIO HID",
+  [1] = "PicoUSBKeyBridge",
+  [2] = "PicoUSBKeyBridge PIO HID",
   [3] = "000000000002",
 };
 
@@ -175,8 +175,8 @@ typedef struct {
 
 // Small ring buffer to absorb CDC bursts without blocking USB tasks.
 // This lives on core0 and feeds the multicore FIFO opportunistically.
-#define KEYEMU_QUEUE_LEN 64
-static uint16_t key_queue[KEYEMU_QUEUE_LEN];
+#define PUSBKB_QUEUE_LEN 64
+static uint16_t key_queue[PUSBKB_QUEUE_LEN];
 static uint16_t key_queue_head = 0;
 static uint16_t key_queue_tail = 0;
 
@@ -186,7 +186,7 @@ static bool key_queue_is_empty(void) {
 
 static size_t key_queue_free_space(void) {
   if (key_queue_head >= key_queue_tail) {
-    return KEYEMU_QUEUE_LEN - (key_queue_head - key_queue_tail) - 1;
+    return PUSBKB_QUEUE_LEN - (key_queue_head - key_queue_tail) - 1;
   }
   return (key_queue_tail - key_queue_head) - 1;
 }
@@ -196,7 +196,7 @@ static bool key_queue_push(uint16_t packed) {
     return false;
   }
   key_queue[key_queue_head] = packed;
-  key_queue_head = (uint16_t)((key_queue_head + 1) % KEYEMU_QUEUE_LEN);
+  key_queue_head = (uint16_t)((key_queue_head + 1) % PUSBKB_QUEUE_LEN);
   return true;
 }
 
@@ -205,7 +205,7 @@ static bool key_queue_pop(uint16_t *out) {
     return false;
   }
   *out = key_queue[key_queue_tail];
-  key_queue_tail = (uint16_t)((key_queue_tail + 1) % KEYEMU_QUEUE_LEN);
+  key_queue_tail = (uint16_t)((key_queue_tail + 1) % PUSBKB_QUEUE_LEN);
   return true;
 }
 
@@ -332,7 +332,7 @@ static void core0_pet_watchdog_if_healthy(void) {
 static void core0_service_native_usb_and_logs(void) {
   // Service native USB (CDC) tasks and flush any pending log output.
   tud_task();
-  keyemu_log_flush();
+  log_flush();
 }
 
 static void core0_drain_queue_to_fifo(void) {
@@ -432,7 +432,7 @@ int main(void) {
   set_sys_clock_khz(120000, true);
 
   // Initialize CDC logging before launching core1 to avoid race conditions.
-  keyemu_log_init();
+  log_init();
 
   // Check if we rebooted due to watchdog (log after CDC connects)
   bool watchdog_reboot = watchdog_enable_caused_reboot();
@@ -458,7 +458,7 @@ int main(void) {
   if (watchdog_reboot) {
     LOG_WARN("watchdog triggered reboot");
   }
-  LOG_INFO("keyemu boot");
+  LOG_INFO("PicoUSBKeyBridge boot");
   LOG_INFO("CDC device ready");
 
   // Enable watchdog with timeout, pause during debug sessions
