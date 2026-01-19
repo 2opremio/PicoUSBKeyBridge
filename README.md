@@ -1,14 +1,15 @@
 # PicoUSBKeyBridge
 
-`PicoUSBKeyBridge` turns the Waveshare RP2350-USB-A into a wired keyboard emulator. It
-listens for key events over a USB CDC serial connection and emits HID keyboard
-reports on the PIO USB port, letting one host drive keyboard input on another.
+`PicoUSBKeyBridge` turns the [Waveshare RP2350-USB-A](https://www.waveshare.com/rp2350-usb-a.htm) into a
+wired keyboard emulator. You can send keypresses programmatically over USB-C, while
+the USB-A port behaves like a standard keyboard connected to a target host. Read
+the wiring section carefully before connecting anything.
 
-```mermaid
-flowchart TD
-  sourceHost[SourceHost] -->|"USB-C cable (standard), CDC serial (custom protocol)"| rp2350Board[RP2350-USB-A]
-  rp2350Board -->|"USB-A cable (non-standard, VBUS cut), HID keyboard (standard)"| targetHost[TargetHost]
-```
+**WARNING: A special USB-A to USB-A cable is required and must be built.** The USB-A
+port is used as a device/peripheral, so VBUS must be disconnected in the cable. Do
+not use a standard A-to-A cable.
+
+![Port orientation on the RP2350-USB-A](img/waveshare-rp2350-usb-a-annotated.png)
 
 ## Build
 
@@ -47,6 +48,8 @@ UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
 - A USB-A male breakout like this can be used to build the cable:
   https://www.amazon.es/PNGKNYOCN-adaptador-hembra-unidades-Dupont/dp/B09YCC526T
 - D+ pull-up should be present; D- pull-up should be absent.
+
+![USB-A to USB-A cable wiring (VBUS cut)](img/usb-a-to-a-cable-diagram.png)
 
 **VBUS warning (important):** The PIO USB port uses a USB-A female connector, which is
 normally **host-side** by USB spec. We are using it as a **device/peripheral**, so the
@@ -98,9 +101,5 @@ Step-by-step:
 CDC TX is reserved for **logs only**. The device never sends protocol bytes back,
 so the host can safely read TX output as plain text logs.
 
-TinyUSB stack logging is enabled (CFG_TUSB_DEBUG=3) and is routed to CDC TX. Logs
-are buffered until the CDC port is opened **and DTR is asserted** (tud_cdc_connected),
-then flushed. This prevents logs from being sent to a closed port where the OS may
-drop bytes. If you want logs, the host must open the port and assert DTR; otherwise
-logs will not flow. If the log buffer fills before DTR, older logs are dropped and
-a "WARN: log buffer overflow" message is sent once space is available.
+Logs are buffered and only flushed once the CDC port is opened **and DTR is
+asserted**. If you want logs, open the port and send DTR.
