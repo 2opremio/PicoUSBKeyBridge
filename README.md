@@ -2,12 +2,10 @@
 
 `PicoUSBKeyBridge` turns the [Waveshare RP2350-USB-A](https://www.waveshare.com/rp2350-usb-a.htm) into a
 wired keyboard emulator. You can send keypresses programmatically over USB-C, while
-the USB-A port behaves like a standard keyboard connected to a target host. Read
-the wiring section carefully before connecting anything.
+the USB-A port behaves like a standard keyboard connected to a target host.
 
-**WARNING: A special USB-A to USB-A cable is required and must be built.** The USB-A
-port is used as a device/peripheral, so VBUS must be disconnected in the cable. Do
-not use a standard A-to-A cable.
+**WARNING:** Read the wiring checklist carefully before connecting anything. A
+non-standard, special USB-A to USB-A cable is required and must be built.
 
 ![Port orientation on the RP2350-USB-A](img/waveshare-rp2350-usb-a-annotated.png)
 
@@ -43,20 +41,17 @@ UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
 
 ## Wiring checklist
 
-- PIO USB uses GPIO12 (D+) and GPIO13 (D-).
 - Use a **non-standard USB-A to USB-A** cable with **no VBUS connection** (cut VBUS in the cable).
 - A USB-A male breakout like this can be used to build the cable:
   https://www.amazon.es/PNGKNYOCN-adaptador-hembra-unidades-Dupont/dp/B09YCC526T
-- D+ pull-up should be present; D- pull-up should be absent.
 
 ![USB-A to USB-A cable wiring (VBUS cut)](img/usb-a-to-a-cable-diagram.png)
 
-**VBUS warning (important):** The PIO USB port uses a USB-A female connector, which is
-normally **host-side** by USB spec. We are using it as a **device/peripheral**, so the
-VBUS line must be **disconnected** in the A-to-A cable. If VBUS is left connected and
-both sides supply 5V, you can back-power a host, damage ports, or create unsafe power
-contention. This is why cutting VBUS is critical, and why the cable must be built
-carefully.
+**VBUS warning (important):** The USB-A side must not provide VBUS to avoid electrical
+damage. We are using a USB-A female connector on a peripheral, which is normally
+**host-side** by USB spec. VBUS must only be provided from the USB-C port to avoid
+back-powering. If VBUS is provided on both the USB-C and USB-A ports, **your devices
+may be damaged**.
 
 ## Serial protocol
 
