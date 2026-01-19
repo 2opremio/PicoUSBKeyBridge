@@ -4,6 +4,12 @@
 listens for key events over a USB CDC serial connection and emits HID keyboard
 reports on the PIO USB port, letting one host drive keyboard input on another.
 
+```mermaid
+flowchart TD
+  sourceHost[SourceHost] -->|"USB-C cable (standard), CDC serial (custom protocol)"| rp2350Board[RP2350-USB-A]
+  rp2350Board -->|"USB-A cable (non-standard, VBUS cut), HID keyboard (standard)"| targetHost[TargetHost]
+```
+
 ## Build
 
 1. Install toolchain dependencies:
@@ -35,9 +41,17 @@ UF2 output is in `build/` (e.g. `build/keyemu.uf2`).
 ## Wiring checklist
 
 - PIO USB uses GPIO12 (D+) and GPIO13 (D-).
-- USB-A port VBUS must be isolated from VSYS (cut trace between USB1.VBUS and VSYS).
+- Use a **non-standard USB-A to USB-A** cable with **no VBUS connection** (cut VBUS in the cable).
+- A USB-A male breakout like this can be used to build the cable:
+  https://www.amazon.es/PNGKNYOCN-adaptador-hembra-unidades-Dupont/dp/B09YCC526T
 - D+ pull-up should be present; D- pull-up should be absent.
-- Use a straight-through USB-A breakout cable (verify pin order with a meter).
+
+**VBUS warning (important):** The PIO USB port uses a USB-A female connector, which is
+normally **host-side** by USB spec. We are using it as a **device/peripheral**, so the
+VBUS line must be **disconnected** in the A-to-A cable. If VBUS is left connected and
+both sides supply 5V, you can back-power a host, damage ports, or create unsafe power
+contention. This is why cutting VBUS is critical, and why the cable must be built
+carefully.
 
 ## Serial protocol
 
@@ -64,12 +78,16 @@ Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
 
 Each packet generates a key press followed by a key release.
 
-## HID report descriptor
+For example, this sequence:
 
-The PIO USB device uses the TinyUSB keyboard descriptor:
-`TUD_HID_REPORT_DESC_KEYBOARD()` (boot keyboard report).
+```
+04 00  04 02  1E 08
+```
 
-## Runtime behavior
+Corresponds to the keypress sequence [`a`, `A`, `⌘+1`]
 
-Each 2-byte serial packet is converted into a single HID keyboard report on the
-PIO USB interface. This supports modifier keys for midimapper integration.
+Step-by-step:
+
+1. `04 00` → HID keycode `0x04` corresponding to letter `a`, no modifier (produces `a`).
+2. `04 02` → HID keycode `0x04` corresponding to letter `a`, with Left Shift `0x02` (produces `A`).
+3. `1E 08` → HID keycode `0x1E` corresponding to `1`, with Left GUI/Command `0x08` (produces `⌘+1`).
