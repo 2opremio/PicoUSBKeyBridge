@@ -98,3 +98,57 @@ so the host can safely read TX output as plain text logs.
 
 Logs are buffered and only flushed once the CDC port is opened **and DTR is
 asserted**. If you want logs, open the port and send DTR.
+
+## USB bridge daemon
+
+This repo also ships a small HTTP daemon that keeps a persistent connection to
+the PicoUSBKeyBridge CDC device, retries forever, and logs device output to
+stdout.
+
+Build/run:
+
+```
+go run ./cmd/picousbridged
+```
+
+Flags:
+
+- `-host` (default: `localhost`)
+- `-port` (default: `8080`)
+- `-send-timeout` (default: `2`) seconds to wait when queueing a keypress
+
+## HTTP API
+
+`POST /keypress` with a low-level HID keycode + modifier flags.
+
+For instance, to send letter `A` (`a` (HID code 4) + `Shift`) :
+
+```
+curl -X POST "http://localhost:8080/keypress" \
+  -H "Content-Type: application/json" \
+  -d '{"hid_code":4,"left_shift":true}'
+```
+
+Response:
+
+```
+{"status":"ok"}
+```
+
+Notes:
+
+- `hid_code` is a USB HID Usage ID (Keyboard/Keypad page).
+- HID modifier flags are optional boolean fields on the request:
+  - `left_ctrl`, `left_shift`, `left_alt`, `left_gui`
+  - `right_ctrl`, `right_shift`, `right_alt`, `right_gui`
+
+## Client library
+
+There is a small Go client in `client/` for calling the HTTP API.
+
+```
+client := usbbridge.New(usbbridge.Config{
+	Host: "localhost:8080",
+})
+err := client.SendKeypress(ctx, usbbridge.KeypressRequest{HIDCode: 0x04, LeftShift: true}) // A with Shift
+```
