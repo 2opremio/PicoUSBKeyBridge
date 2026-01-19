@@ -15,7 +15,7 @@
 #include "hardware/sync.h"
 #include "tusb.h"
 
-// RP2040 has 264 KB SRAM (~256 KiB); this log buffer consumes 8 KB.
+// RP2350 has 520 KB SRAM; this log buffer consumes 8 KB.
 #define KEYEMU_LOG_BUFFER_SIZE 8192
 
 static uint8_t log_buffer[KEYEMU_LOG_BUFFER_SIZE];

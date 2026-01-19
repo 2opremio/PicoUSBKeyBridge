@@ -17,9 +17,10 @@ import subprocess
 from typing import Dict, Iterable, List, Tuple
 
 
-PICO_RAM_BYTES = 264 * 1024
+PICO_RAM_BYTES = 520 * 1024
+# Waveshare RP2350-USB-A ships with 2 MB flash.
 PICO_FLASH_BYTES = 2 * 1024 * 1024
-PICO_DEVICE_NAME = "RP2040 (Pico)"
+PICO_DEVICE_NAME = "RP2350 (Waveshare)"
 
 SECTION_TOTALS = {
     ".boot2",
@@ -164,7 +165,7 @@ def print_top_entries(entries: List[Tuple[int, str, str]], top: int) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize Pico memory usage.")
+    parser = argparse.ArgumentParser(description="Summarize RP2350 memory usage.")
     parser.add_argument(
         "--elf", default="build/keyemu.elf", help="Path to the ELF file."
     )
@@ -177,13 +178,13 @@ def main() -> int:
         "--ram-size",
         type=int,
         default=PICO_RAM_BYTES,
-        help="Total RAM size in bytes (default: 264 KB for RP2040).",
+        help="Total RAM size in bytes (default: 520 KB for RP2350).",
     )
     parser.add_argument(
         "--flash-size",
         type=int,
         default=PICO_FLASH_BYTES,
-        help="Total flash size in bytes (default: 2 MB for Pico).",
+        help="Total flash size in bytes (default: 2 MB for Waveshare RP2350-USB-A).",
     )
     parser.add_argument(
         "--device-name",
