@@ -9,6 +9,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "hardware/sync.h"
 #include "tusb.h"
@@ -18,12 +19,15 @@
 static uint8_t log_buffer[KEYEMU_LOG_BUFFER_SIZE];
 static size_t log_head = 0;
 static size_t log_tail = 0;
-static bool log_overflow = false;
+static size_t log_dropped_bytes = 0;
 static spin_lock_t *log_lock = NULL;
+static bool log_initialized = false;
 
-static void log_lock_init(void) {
-  if (log_lock == NULL) {
-    log_lock = spin_lock_instance(31);
+void keyemu_log_init(void) {
+  if (!log_initialized) {
+    int lock_num = spin_lock_claim_unused(true);
+    log_lock = spin_lock_instance(lock_num);
+    log_initialized = true;
   }
 }
 
@@ -35,16 +39,15 @@ static size_t log_free_space(void) {
 }
 
 void keyemu_log_write(const char *data, size_t len) {
-  if (data == NULL || len == 0) {
+  if (data == NULL || len == 0 || !log_initialized) {
     return;
   }
 
-  log_lock_init();
   uint32_t save = spin_lock_blocking(log_lock);
 
   size_t free_space = log_free_space();
   if (len > free_space) {
-    log_overflow = true;
+    log_dropped_bytes += (len - free_space);
     len = free_space;
   }
 
@@ -70,25 +73,31 @@ static size_t log_pop_chunk(uint8_t *out, size_t max_len) {
 }
 
 void keyemu_log_flush(void) {
-  if (!tud_cdc_connected()) {
+  if (!log_initialized || !tud_cdc_connected()) {
     return;
   }
 
-  log_lock_init();
   uint32_t save = spin_lock_blocking(log_lock);
-  bool overflowed = log_overflow;
+  size_t dropped = log_dropped_bytes;
   spin_unlock(log_lock, save);
 
-  if (overflowed) {
-    static const char overflow_msg[] = "WARN: log buffer overflow\r\n";
-    size_t overflow_len = sizeof(overflow_msg) - 1;
+  if (dropped > 0) {
+    char overflow_msg[64];
+    int overflow_len = snprintf(overflow_msg, sizeof(overflow_msg),
+                                "WARN: log buffer overflow (%u bytes dropped)\r\n",
+                                (unsigned)dropped);
+    if (overflow_len <= 0) {
+      overflow_len = 0;
+    } else if ((size_t)overflow_len >= sizeof(overflow_msg)) {
+      overflow_len = (int)(sizeof(overflow_msg) - 1);
+    }
     // Avoid dropping the overflow warning: only write when the CDC TX buffer can accept it.
-    if (tud_cdc_write_available() < overflow_len) {
+    if (tud_cdc_write_available() < (uint32_t)overflow_len) {
       return;
     }
     tud_cdc_write(overflow_msg, (uint32_t)overflow_len);
     save = spin_lock_blocking(log_lock);
-    log_overflow = false;
+    log_dropped_bytes = 0;
     spin_unlock(log_lock, save);
   }
 

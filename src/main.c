@@ -257,6 +257,9 @@ void core1_main() {
 int main(void) {
   set_sys_clock_khz(120000, true);
 
+  // Initialize logging before launching core1 to avoid race conditions
+  keyemu_log_init();
+
   multicore_reset_core1();
   multicore_launch_core1(core1_main);
 

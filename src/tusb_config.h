@@ -16,7 +16,7 @@
 #define CFG_TUD_ENABLED           1
 #define CFG_TUH_ENABLED           0
 #ifndef CFG_TUSB_DEBUG
-#define CFG_TUSB_DEBUG            3
+#define CFG_TUSB_DEBUG            3  // 0=off, 1=errors, 2=warnings, 3=info
 #endif
 
 // Route TinyUSB debug logs to CDC TX.

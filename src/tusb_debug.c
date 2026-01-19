@@ -19,8 +19,8 @@ int keyemu_tusb_debug_printf(const char *format, ...) {
     return len;
   }
 
-  if (len > (int)sizeof(buffer)) {
-    len = (int)sizeof(buffer);
+  if ((size_t)len >= sizeof(buffer)) {
+    len = (int)(sizeof(buffer) - 1);
   }
 
   keyemu_log_write(buffer, (size_t)len);
