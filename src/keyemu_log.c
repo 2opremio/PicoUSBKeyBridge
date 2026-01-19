@@ -15,8 +15,10 @@
 #include "hardware/sync.h"
 #include "tusb.h"
 
-// RP2350 has 520 KB SRAM; this log buffer consumes 8 KB.
-#define KEYEMU_LOG_BUFFER_SIZE 8192
+// RP2350 has 520 KB SRAM; this log buffer consumes 16 KB.
+// Plenty of headroom remains for USB stacks and application state.
+// Larger buffer keeps more history when CDC is disconnected for long runs.
+#define KEYEMU_LOG_BUFFER_SIZE 16384
 
 static uint8_t log_buffer[KEYEMU_LOG_BUFFER_SIZE];
 static size_t log_head = 0;
