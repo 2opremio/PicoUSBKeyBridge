@@ -145,11 +145,10 @@ void keyemu_log_flush(void) {
   }
 
   size_t dropped = log_get_dropped_bytes();
+  log_flush_available_chunks();
   if (!log_emit_overflow_warning(dropped)) {
     return;
   }
-
-  log_flush_available_chunks();
   tud_cdc_write_flush();
 }
 
