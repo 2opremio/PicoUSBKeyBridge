@@ -32,7 +32,11 @@ static void cdc_log_hex2(const char *prefix, uint8_t a, uint8_t b) {
   char buf[32];
   int len = snprintf(buf, sizeof(buf), "%s%02X %02X\r\n", prefix, a, b);
   if (len > 0) {
-    keyemu_log_write(buf, (size_t)len);
+    size_t write_len = (size_t)len;
+    if (write_len >= sizeof(buf)) {
+      write_len = sizeof(buf) - 1;
+    }
+    keyemu_log_write(buf, write_len);
   }
 }
 
