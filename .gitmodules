@@ -1,6 +1,6 @@
 [submodule "third_party/pico-pio-usb"]
 	path = third_party/pico-pio-usb
-	url = git@github.com:2opremio/Pico-PIO-USB.git
+	url = https://github.com/sekigon-gonnoc/Pico-PIO-USB.git
 [submodule "third_party/pico-sdk"]
 	path = third_party/pico-sdk
 	url = https://github.com/raspberrypi/pico-sdk

@@ -26,7 +26,6 @@ add_executable(keyemu
   src/keyemu_log.c
   src/main.c
   src/usb_descriptors.c
-  src/tusb_debug.c
 )
 
 target_include_directories(keyemu PRIVATE src)

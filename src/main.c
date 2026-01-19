@@ -1,5 +1,17 @@
 /*
  * keyemu: CDC (native USB) -> HID keyboard (PIO USB)
+ *
+ * Core ownership:
+ * - core1 runs the PIO USB device on the USB A port (host-side HID keyboard).
+ *   It services the PIO USB task and consumes key packets from the FIFO.
+ * - core0 (main) handles CDC input from the native USB port and logging output.
+ *   It parses CDC bytes into HID key packets and feeds core1 via the FIFO.
+ *
+ * Inter-core communication:
+ * - core0 enqueues 16-bit key packets (keycode + modifier) into a small ring
+ *   buffer, then pushes them over the multicore FIFO when space is available.
+ * - core1 pops packets from the FIFO and emits HID reports over the PIO USB
+ *   device stack.
  */
 
 #include <stdbool.h>
@@ -42,6 +54,8 @@ static void cdc_log_hex2(const char *prefix, uint8_t a, uint8_t b) {
 }
 
 #define LOG_INFO(msg) cdc_log("INFO: ", (msg))
+#define LOG_WARN(msg) cdc_log("WARN: ", (msg))
+#define LOG_ERROR(msg) cdc_log("ERROR: ", (msg))
 #if KEYEMU_DEBUG
 #define LOG_DEBUG(msg) cdc_log("DEBUG: ", (msg))
 #define LOG_DEBUG_PKT(a, b) cdc_log_hex2("DEBUG: rx ", (a), (b))
@@ -116,27 +130,27 @@ static uint8_t const pio_desc_configuration[] = {
                      CFG_TUD_HID_EP_BUFSIZE, 10),
 };
 
-static const char *string_descriptors_base[] = {
+static const char *pio_usb_string_descriptors_base[] = {
   [0] = (const char[]){0x09, 0x04},
   [1] = "keyemu",
   [2] = "keyemu PIO HID",
   [3] = "000000000002",
 };
 
-static string_descriptor_t str_desc[4];
+static string_descriptor_t pio_usb_string_desc[4];
 
-static void init_string_desc(void) {
+static void init_pio_usb_string_desc(void) {
   for (int idx = 0; idx < 4; idx++) {
     uint8_t len = 0;
-    uint16_t *wchar_str = (uint16_t *)&str_desc[idx];
+    uint16_t *wchar_str = (uint16_t *)&pio_usb_string_desc[idx];
     if (idx == 0) {
-      wchar_str[1] = string_descriptors_base[0][0] |
-                     ((uint16_t)string_descriptors_base[0][1] << 8);
+      wchar_str[1] = pio_usb_string_descriptors_base[0][0] |
+                     ((uint16_t)pio_usb_string_descriptors_base[0][1] << 8);
       len = 1;
     } else if (idx <= 3) {
-      len = strnlen(string_descriptors_base[idx], 31);
+      len = strnlen(pio_usb_string_descriptors_base[idx], 31);
       for (int i = 0; i < len; i++) {
-        wchar_str[i + 1] = string_descriptors_base[idx][i];
+        wchar_str[i + 1] = pio_usb_string_descriptors_base[idx][i];
       }
     }
     wchar_str[0] = (TUSB_DESC_STRING << 8) | (2 * len + 2);
@@ -147,7 +161,7 @@ static usb_descriptor_buffers_t pio_desc = {
   .device = (uint8_t *)&pio_desc_device,
   .config = pio_desc_configuration,
   .hid_report = report_desc,
-  .string = str_desc
+  .string = pio_usb_string_desc
 };
 
 // --------------------------------------------------------------------
@@ -200,6 +214,7 @@ static void pio_send_key(const hid_key_t *key) {
     return;
   }
 
+  // HID report on the PIO USB (USB A port) device stack.
   hid_keyboard_report_t report = {0};
   report.modifier = key->modifier;
   report.keycode[0] = key->keycode;
@@ -212,7 +227,7 @@ static void pio_send_key(const hid_key_t *key) {
 }
 
 // --------------------------------------------------------------------
-// Core1: PIO USB device task
+// Core1: USB A port (PIO USB device) + HID report output
 // --------------------------------------------------------------------
 
 void core1_main() {
@@ -233,18 +248,20 @@ void core1_main() {
     .pinout = PIO_USB_PINOUT_DPDM
   };
 
-  init_string_desc();
+  init_pio_usb_string_desc();
+  // Initialize the PIO USB device (USB A port).
   pio_usb_device = pio_usb_device_init(&pio_cfg, &pio_desc);
   if (pio_usb_device == NULL) {
-    LOG_INFO("FATAL: PIO USB init failed - waiting for watchdog");
+    LOG_ERROR("PIO USB init failed - waiting for watchdog");
     // Don't update core1_last_seen_us; watchdog will trigger reboot
     while (true) {
       sleep_ms(100);
     }
   }
+  // Grab the HID endpoint from the PIO USB device stack.
   pio_hid_ep = pio_usb_get_endpoint(pio_usb_device, 1);
   if (pio_hid_ep == NULL) {
-    LOG_INFO("FATAL: PIO USB HID endpoint missing - waiting for watchdog");
+    LOG_ERROR("PIO USB HID endpoint missing - waiting for watchdog");
     // Don't update core1_last_seen_us; watchdog will trigger reboot
     while (true) {
       sleep_ms(100);
@@ -260,8 +277,10 @@ void core1_main() {
     // Update health timestamp for watchdog monitoring
     core1_last_seen_us = time_us_32();
 
+    // Keep the PIO USB device running on the USB A port.
     pio_usb_device_task();
 
+    // Consume key packets from core0 and emit HID reports over PIO USB.
     while (multicore_fifo_rvalid()) {
       uint32_t packed = multicore_fifo_pop_blocking();
       hid_key_t key = {
@@ -277,8 +296,17 @@ void core1_main() {
 }
 
 // --------------------------------------------------------------------
-// Core0: CDC (native USB) -> send HID via FIFO
+// Core0: CDC (native USB) input + logging output
 // --------------------------------------------------------------------
+
+typedef struct {
+  bool was_connected;
+  bool have_keycode;
+  uint8_t pending_keycode;
+  uint32_t dropped_queue;
+  absolute_time_t last_rx_time;
+  bool last_rx_time_valid;
+} cdc_rx_state_t;
 
 // Check if core1 is healthy (responsive within timeout)
 static bool core1_is_healthy(void) {
@@ -293,23 +321,142 @@ static bool core1_is_healthy(void) {
   return elapsed < CORE1_HEALTH_TIMEOUT_US;
 }
 
+static void core0_pet_watchdog_if_healthy(void) {
+  // Pet the watchdog only if both cores are healthy.
+  // If core1 stops responding, we stop petting, and watchdog reboots us.
+  if (core1_is_healthy()) {
+    watchdog_update();
+  }
+}
+
+static void core0_service_native_usb_and_logs(void) {
+  // Service native USB (CDC) tasks and flush any pending log output.
+  tud_task();
+  keyemu_log_flush();
+}
+
+static void core0_drain_queue_to_fifo(void) {
+  // Drain queued packets into the multicore FIFO when space is available.
+  // Use timeout to avoid blocking indefinitely if core1 stops consuming.
+  while (multicore_fifo_wready()) {
+    uint16_t packed;
+    if (!key_queue_pop(&packed)) {
+      break;
+    }
+    if (!multicore_fifo_push_timeout_us((uint32_t)packed, 100000)) {
+      // Core1 not consuming; watchdog will handle if it persists.
+      // Drop the packet rather than reorder by re-queuing at wrong position.
+      LOG_DEBUG("FIFO push timeout, packet dropped");
+      break;
+    }
+  }
+}
+
+static void core0_update_cdc_state(cdc_rx_state_t *state) {
+  bool connected = tud_cdc_connected();  // CDC on native USB port.
+  if (state->was_connected && !connected) {
+    // Drop partial packets on disconnect to avoid stale pairing later.
+    state->have_keycode = false;
+    state->pending_keycode = 0;
+    state->last_rx_time_valid = false;
+  }
+  state->was_connected = connected;
+  if (state->have_keycode && state->last_rx_time_valid) {
+    int64_t age_us = absolute_time_diff_us(state->last_rx_time,
+                                           get_absolute_time());
+    if (age_us > 200000) {
+      // If a second byte never arrives, discard the pending keycode.
+      state->have_keycode = false;
+      state->pending_keycode = 0;
+      state->last_rx_time_valid = false;
+    }
+  }
+}
+
+static void core0_handle_cdc_input(cdc_rx_state_t *state) {
+  // Only read from CDC when the queue has room for more packets.
+  size_t free_packets = key_queue_free_space();
+  size_t max_bytes = free_packets * 2;
+  if (state->have_keycode) {
+    // Allow one extra byte to complete a pending keycode.
+    if (max_bytes == 0) {
+      return;
+    }
+    max_bytes += 1;
+  }
+
+  if (!tud_cdc_available()) {  // CDC RX on native USB port.
+    return;
+  }
+
+  uint8_t buf[64];
+  size_t read_len = sizeof(buf);
+  if (max_bytes < read_len) {
+    read_len = max_bytes;
+  }
+  if (read_len == 0) {
+    return;
+  }
+
+  uint32_t count = tud_cdc_read(buf, (uint32_t)read_len);  // CDC RX bytes.
+  if (count > 0) {
+    LOG_DEBUG("CDC RX data");
+    state->last_rx_time = get_absolute_time();
+    state->last_rx_time_valid = true;
+  }
+
+  for (uint32_t i = 0; i < count; i++) {
+    if (!state->have_keycode) {
+      state->pending_keycode = buf[i];
+      state->have_keycode = true;
+      continue;
+    }
+
+    uint8_t modifier = buf[i];
+    uint16_t packed = (uint16_t)state->pending_keycode |
+                      ((uint16_t)modifier << 8);
+    if (state->pending_keycode != 0) {
+      if (!key_queue_push(packed)) {
+        state->dropped_queue++;
+        if ((state->dropped_queue & 0x3F) == 1) {
+          // Throttle noisy logs while still indicating drops.
+          LOG_DEBUG("CDC RX drop: queue full");
+        }
+      }
+    }
+    state->have_keycode = false;
+  }
+}
+
 int main(void) {
   set_sys_clock_khz(120000, true);
 
-  // Initialize logging before launching core1 to avoid race conditions
+  // Initialize CDC logging before launching core1 to avoid race conditions.
   keyemu_log_init();
 
   // Check if we rebooted due to watchdog (log after CDC connects)
   bool watchdog_reboot = watchdog_enable_caused_reboot();
 
+  // Launch core1 to own the USB A (PIO) device stack.
   multicore_reset_core1();
   multicore_launch_core1(core1_main);
 
-  sleep_ms(100);
-  tud_init(0);
+  // Wait briefly for core1 to bring up the PIO USB device stack.
+  absolute_time_t core1_wait_start = get_absolute_time();
+  while (!core1_initialized) {
+    if (absolute_time_diff_us(core1_wait_start, get_absolute_time()) > 200000) {
+      LOG_ERROR("core1 PIO USB init timeout");
+      break;
+    }
+    sleep_ms(5);
+  }
+  // Initialize the native USB stack (CDC on the built-in USB port).
+  if (!tud_init(0)) {
+    LOG_ERROR("tud_init failed");
+  }
 
   if (watchdog_reboot) {
-    LOG_INFO("WARN: watchdog triggered reboot");
+    LOG_WARN("watchdog triggered reboot");
   }
   LOG_INFO("keyemu boot");
   LOG_INFO("CDC device ready");
@@ -318,103 +465,14 @@ int main(void) {
   watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
   LOG_INFO("watchdog enabled");
 
+  cdc_rx_state_t cdc_rx_state = {0};
+
   while (true) {
-    // Pet the watchdog only if both cores are healthy.
-    // If core1 stops responding, we stop petting, and watchdog reboots us.
-    if (core1_is_healthy()) {
-      watchdog_update();
-    }
-
-    tud_task();
-    keyemu_log_flush();
-    static bool was_connected = false;
-    static bool have_keycode = false;
-    static uint8_t pending_keycode = 0;
-    static uint32_t dropped_queue = 0;
-    static absolute_time_t last_rx_time;
-    static bool last_rx_time_valid = false;
-
-    // Drain queued packets into the multicore FIFO when space is available.
-    // Use timeout to avoid blocking indefinitely if core1 stops consuming.
-    while (multicore_fifo_wready()) {
-      uint16_t packed;
-      if (!key_queue_pop(&packed)) {
-        break;
-      }
-      if (!multicore_fifo_push_timeout_us((uint32_t)packed, 100000)) {
-        // Core1 not consuming; watchdog will handle if it persists.
-        // Drop the packet rather than reorder by re-queuing at wrong position.
-        LOG_DEBUG("FIFO push timeout, packet dropped");
-        break;
-      }
-    }
-
-    bool connected = tud_cdc_connected();
-    if (was_connected && !connected) {
-      // Drop partial packets on disconnect to avoid stale pairing later.
-      have_keycode = false;
-      pending_keycode = 0;
-      last_rx_time_valid = false;
-    }
-    was_connected = connected;
-    if (have_keycode && last_rx_time_valid) {
-      int64_t age_us = absolute_time_diff_us(last_rx_time, get_absolute_time());
-      if (age_us > 200000) {
-        // If a second byte never arrives, discard the pending keycode.
-        have_keycode = false;
-        pending_keycode = 0;
-        last_rx_time_valid = false;
-      }
-    }
-
-    // Only read from CDC when the queue has room for more packets.
-    size_t free_packets = key_queue_free_space();
-    size_t max_bytes = free_packets * 2;
-    if (have_keycode) {
-      // Allow one extra byte to complete a pending keycode.
-      if (max_bytes == 0) {
-        continue;
-      }
-      max_bytes += 1;
-    }
-
-    if (tud_cdc_available()) {
-      uint8_t buf[64];
-      size_t read_len = sizeof(buf);
-      if (max_bytes < read_len) {
-        read_len = max_bytes;
-      }
-      if (read_len == 0) {
-        continue;
-      }
-      uint32_t count = tud_cdc_read(buf, (uint32_t)read_len);
-      if (count > 0) {
-        LOG_DEBUG("CDC RX data");
-        last_rx_time = get_absolute_time();
-        last_rx_time_valid = true;
-      }
-
-      for (uint32_t i = 0; i < count; i++) {
-        if (!have_keycode) {
-          pending_keycode = buf[i];
-          have_keycode = true;
-          continue;
-        }
-
-        uint8_t modifier = buf[i];
-        uint16_t packed = (uint16_t)pending_keycode | ((uint16_t)modifier << 8);
-        if (pending_keycode != 0) {
-          if (!key_queue_push(packed)) {
-            dropped_queue++;
-            if ((dropped_queue & 0x3F) == 1) {
-              // Throttle noisy logs while still indicating drops.
-              LOG_DEBUG("CDC RX drop: queue full");
-            }
-          }
-        }
-        have_keycode = false;
-      }
-    }
+    core0_pet_watchdog_if_healthy();
+    core0_service_native_usb_and_logs();
+    core0_drain_queue_to_fifo();
+    core0_update_cdc_state(&cdc_rx_state);
+    core0_handle_cdc_input(&cdc_rx_state);
   }
 
   return 0;
