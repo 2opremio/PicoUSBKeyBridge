@@ -82,6 +82,7 @@ void keyemu_log_flush(void) {
   if (overflowed) {
     static const char overflow_msg[] = "WARN: log buffer overflow\r\n";
     size_t overflow_len = sizeof(overflow_msg) - 1;
+    // Avoid dropping the overflow warning: only write when the CDC TX buffer can accept it.
     if (tud_cdc_write_available() < overflow_len) {
       return;
     }
@@ -97,6 +98,7 @@ void keyemu_log_flush(void) {
     if (available == 0) {
       break;
     }
+    // Only pop as much as the CDC TX buffer can accept to avoid losing logs.
     size_t max_len = sizeof(chunk);
     if (available < max_len) {
       max_len = (size_t)available;

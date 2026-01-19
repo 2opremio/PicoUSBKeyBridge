@@ -138,6 +138,41 @@ typedef struct {
   uint8_t modifier;
 } hid_key_t;
 
+// Small ring buffer to absorb CDC bursts without blocking USB tasks.
+#define KEYEMU_QUEUE_LEN 64
+static uint16_t key_queue[KEYEMU_QUEUE_LEN];
+static uint16_t key_queue_head = 0;
+static uint16_t key_queue_tail = 0;
+
+static bool key_queue_is_empty(void) {
+  return key_queue_head == key_queue_tail;
+}
+
+static size_t key_queue_free_space(void) {
+  if (key_queue_head >= key_queue_tail) {
+    return KEYEMU_QUEUE_LEN - (key_queue_head - key_queue_tail) - 1;
+  }
+  return (key_queue_tail - key_queue_head) - 1;
+}
+
+static bool key_queue_push(uint16_t packed) {
+  if (key_queue_free_space() == 0) {
+    return false;
+  }
+  key_queue[key_queue_head] = packed;
+  key_queue_head = (uint16_t)((key_queue_head + 1) % KEYEMU_QUEUE_LEN);
+  return true;
+}
+
+static bool key_queue_pop(uint16_t *out) {
+  if (key_queue_is_empty()) {
+    return false;
+  }
+  *out = key_queue[key_queue_tail];
+  key_queue_tail = (uint16_t)((key_queue_tail + 1) % KEYEMU_QUEUE_LEN);
+  return true;
+}
+
 static void pio_send_key(const hid_key_t *key) {
   if (pio_usb_device == NULL || pio_hid_ep == NULL) {
     return;
@@ -231,9 +266,18 @@ int main(void) {
     static bool was_connected = false;
     static bool have_keycode = false;
     static uint8_t pending_keycode = 0;
-    static uint32_t dropped_fifo = 0;
+    static uint32_t dropped_queue = 0;
     static absolute_time_t last_rx_time;
     static bool last_rx_time_valid = false;
+
+    // Drain queued packets into the multicore FIFO when space is available.
+    while (multicore_fifo_wready()) {
+      uint16_t packed;
+      if (!key_queue_pop(&packed)) {
+        break;
+      }
+      multicore_fifo_push_blocking((uint32_t)packed);
+    }
 
     bool connected = tud_cdc_connected();
     if (was_connected && !connected) {
@@ -251,9 +295,26 @@ int main(void) {
       }
     }
 
+    // Only read from CDC when the queue has room for more packets.
+    size_t free_packets = key_queue_free_space();
+    size_t max_bytes = free_packets * 2;
+    if (have_keycode) {
+      if (max_bytes == 0) {
+        continue;
+      }
+      max_bytes += 1;
+    }
+
     if (tud_cdc_available()) {
       uint8_t buf[64];
-      uint32_t count = tud_cdc_read(buf, sizeof(buf));
+      size_t read_len = sizeof(buf);
+      if (max_bytes < read_len) {
+        read_len = max_bytes;
+      }
+      if (read_len == 0) {
+        continue;
+      }
+      uint32_t count = tud_cdc_read(buf, (uint32_t)read_len);
       if (count > 0) {
         LOG_DEBUG("CDC RX data");
         last_rx_time = get_absolute_time();
@@ -268,14 +329,12 @@ int main(void) {
         }
 
         uint8_t modifier = buf[i];
-        uint32_t packed = (uint32_t)pending_keycode | ((uint32_t)modifier << 8);
+        uint16_t packed = (uint16_t)pending_keycode | ((uint16_t)modifier << 8);
         if (pending_keycode != 0) {
-          if (multicore_fifo_wready()) {
-            multicore_fifo_push_blocking(packed);
-          } else {
-            dropped_fifo++;
-            if ((dropped_fifo & 0x3F) == 1) {
-              LOG_DEBUG("CDC RX drop: FIFO full");
+          if (!key_queue_push(packed)) {
+            dropped_queue++;
+            if ((dropped_queue & 0x3F) == 1) {
+              LOG_DEBUG("CDC RX drop: queue full");
             }
           }
         }
