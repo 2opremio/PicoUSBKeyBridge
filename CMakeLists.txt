@@ -35,6 +35,7 @@ target_link_libraries(keyemu PRIVATE
   pico_multicore
   hardware_pio
   hardware_dma
+  hardware_watchdog
   tinyusb_device
   pico_pio_usb
 )

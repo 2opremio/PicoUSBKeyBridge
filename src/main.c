@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include "hardware/clocks.h"
+#include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
@@ -48,6 +49,22 @@ static void cdc_log_hex2(const char *prefix, uint8_t a, uint8_t b) {
 #define LOG_DEBUG(msg) do {} while (0)
 #define LOG_DEBUG_PKT(a, b) do {} while (0)
 #endif
+
+// --------------------------------------------------------------------
+// Watchdog configuration
+// --------------------------------------------------------------------
+
+// Watchdog timeout in milliseconds. Both cores must be responsive within this
+// window or the device will reboot. 8 seconds is generous; the main loops
+// should iterate in milliseconds.
+#define WATCHDOG_TIMEOUT_MS 8000
+
+// Core1 updates this timestamp each iteration. Core0 checks it before petting
+// the watchdog. If core1 stops updating, core0 stops petting, and the watchdog
+// reboots the device.
+#define CORE1_HEALTH_TIMEOUT_US 5000000  // 5 seconds
+static volatile uint32_t core1_last_seen_us = 0;
+static volatile bool core1_initialized = false;
 
 // --------------------------------------------------------------------
 // PIO USB HID descriptors (keyboard only)
@@ -219,21 +236,30 @@ void core1_main() {
   init_string_desc();
   pio_usb_device = pio_usb_device_init(&pio_cfg, &pio_desc);
   if (pio_usb_device == NULL) {
-    LOG_INFO("PIO USB init failed");
+    LOG_INFO("FATAL: PIO USB init failed - waiting for watchdog");
+    // Don't update core1_last_seen_us; watchdog will trigger reboot
     while (true) {
-      sleep_ms(1000);
+      sleep_ms(100);
     }
   }
   pio_hid_ep = pio_usb_get_endpoint(pio_usb_device, 1);
   if (pio_hid_ep == NULL) {
-    LOG_INFO("PIO USB HID endpoint missing");
+    LOG_INFO("FATAL: PIO USB HID endpoint missing - waiting for watchdog");
+    // Don't update core1_last_seen_us; watchdog will trigger reboot
     while (true) {
-      sleep_ms(1000);
+      sleep_ms(100);
     }
   }
   LOG_INFO("PIO USB HID initialized");
 
+  // Signal that core1 is healthy and ready
+  core1_initialized = true;
+  core1_last_seen_us = time_us_32();
+
   while (true) {
+    // Update health timestamp for watchdog monitoring
+    core1_last_seen_us = time_us_32();
+
     pio_usb_device_task();
 
     while (multicore_fifo_rvalid()) {
@@ -254,21 +280,51 @@ void core1_main() {
 // Core0: CDC (native USB) -> send HID via FIFO
 // --------------------------------------------------------------------
 
+// Check if core1 is healthy (responsive within timeout)
+static bool core1_is_healthy(void) {
+  if (!core1_initialized) {
+    // Core1 hasn't finished init yet; give it time during startup
+    return true;
+  }
+  uint32_t now = time_us_32();
+  uint32_t last_seen = core1_last_seen_us;
+  // Handle timer wraparound (occurs every ~72 minutes)
+  uint32_t elapsed = now - last_seen;
+  return elapsed < CORE1_HEALTH_TIMEOUT_US;
+}
+
 int main(void) {
   set_sys_clock_khz(120000, true);
 
   // Initialize logging before launching core1 to avoid race conditions
   keyemu_log_init();
 
+  // Check if we rebooted due to watchdog (log after CDC connects)
+  bool watchdog_reboot = watchdog_enable_caused_reboot();
+
   multicore_reset_core1();
   multicore_launch_core1(core1_main);
 
   sleep_ms(100);
   tud_init(0);
+
+  if (watchdog_reboot) {
+    LOG_INFO("WARN: watchdog triggered reboot");
+  }
   LOG_INFO("keyemu boot");
   LOG_INFO("CDC device ready");
 
+  // Enable watchdog with timeout, pause during debug sessions
+  watchdog_enable(WATCHDOG_TIMEOUT_MS, true);
+  LOG_INFO("watchdog enabled");
+
   while (true) {
+    // Pet the watchdog only if both cores are healthy.
+    // If core1 stops responding, we stop petting, and watchdog reboots us.
+    if (core1_is_healthy()) {
+      watchdog_update();
+    }
+
     tud_task();
     keyemu_log_flush();
     static bool was_connected = false;
