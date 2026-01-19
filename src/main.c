@@ -178,7 +178,19 @@ void core1_main() {
 
   init_string_desc();
   pio_usb_device = pio_usb_device_init(&pio_cfg, &pio_desc);
+  if (pio_usb_device == NULL) {
+    LOG_INFO("PIO USB init failed");
+    while (true) {
+      sleep_ms(1000);
+    }
+  }
   pio_hid_ep = pio_usb_get_endpoint(pio_usb_device, 1);
+  if (pio_hid_ep == NULL) {
+    LOG_INFO("PIO USB HID endpoint missing");
+    while (true) {
+      sleep_ms(1000);
+    }
+  }
   LOG_INFO("PIO USB HID initialized");
 
   while (true) {
@@ -220,19 +232,32 @@ int main(void) {
     static bool have_keycode = false;
     static uint8_t pending_keycode = 0;
     static uint32_t dropped_fifo = 0;
+    static absolute_time_t last_rx_time;
+    static bool last_rx_time_valid = false;
 
     bool connected = tud_cdc_connected();
     if (was_connected && !connected) {
       have_keycode = false;
       pending_keycode = 0;
+      last_rx_time_valid = false;
     }
     was_connected = connected;
+    if (have_keycode && last_rx_time_valid) {
+      int64_t age_us = absolute_time_diff_us(last_rx_time, get_absolute_time());
+      if (age_us > 200000) {
+        have_keycode = false;
+        pending_keycode = 0;
+        last_rx_time_valid = false;
+      }
+    }
 
     if (tud_cdc_available()) {
       uint8_t buf[64];
       uint32_t count = tud_cdc_read(buf, sizeof(buf));
       if (count > 0) {
         LOG_DEBUG("CDC RX data");
+        last_rx_time = get_absolute_time();
+        last_rx_time_valid = true;
       }
 
       for (uint32_t i = 0; i < count; i++) {

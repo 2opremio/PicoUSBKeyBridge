@@ -99,4 +99,8 @@ CDC TX is reserved for **logs only**. The device never sends protocol bytes back
 so the host can safely read TX output as plain text logs.
 
 TinyUSB stack logging is enabled (CFG_TUSB_DEBUG=3) and is routed to CDC TX. Logs
-are buffered until the CDC port is opened, then flushed.
+are buffered until the CDC port is opened **and DTR is asserted** (tud_cdc_connected),
+then flushed. This prevents logs from being sent to a closed port where the OS may
+drop bytes. If the host does not open the port or fails to set DTR, logs will not
+appear. If the log buffer fills before DTR, older logs are dropped and a
+"WARN: log buffer overflow" message is sent once space is available.

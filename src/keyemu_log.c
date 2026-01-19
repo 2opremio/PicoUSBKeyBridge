@@ -1,5 +1,8 @@
 /*
  * CDC log buffer with flush to TinyUSB CDC TX.
+ *
+ * Note: logs are only flushed when the host asserts DTR (tud_cdc_connected()).
+ * This avoids sending into a closed port where the host may drop bytes.
  */
 
 #include "keyemu_log.h"
