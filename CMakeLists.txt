@@ -23,8 +23,10 @@ set(PICO_PIO_USB_PATH ${CMAKE_CURRENT_LIST_DIR}/third_party/pico-pio-usb)
 add_subdirectory(${PICO_PIO_USB_PATH} pico_pio_usb)
 
 add_executable(keyemu
+  src/keyemu_log.c
   src/main.c
   src/usb_descriptors.c
+  src/tusb_debug.c
 )
 
 target_include_directories(keyemu PRIVATE src)

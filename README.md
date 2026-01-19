@@ -91,3 +91,10 @@ Step-by-step:
 1. `04 00` → HID keycode `0x04` corresponding to letter `a`, no modifier (produces `a`).
 2. `04 02` → HID keycode `0x04` corresponding to letter `a`, with Left Shift `0x02` (produces `A`).
 3. `1E 08` → HID keycode `0x1E` corresponding to `1`, with Left GUI/Command `0x08` (produces `⌘+1`).
+
+
+CDC TX is reserved for **logs only**. The device never sends protocol bytes back,
+so the host can safely read TX output as plain text logs.
+
+TinyUSB stack logging is enabled (CFG_TUSB_DEBUG=3) and is routed to CDC TX. Logs
+are buffered until the CDC port is opened, then flushed.

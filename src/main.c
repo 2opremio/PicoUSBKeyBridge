@@ -14,8 +14,36 @@
 
 #include "class/hid/hid_device.h"
 #include "device/usbd.h"
+#include "keyemu_log.h"
 #include "pio_usb.h"
 #include "tusb.h"
+
+// --------------------------------------------------------------------
+// Logging (CDC TX)
+// --------------------------------------------------------------------
+
+static void cdc_log(const char *level, const char *message) {
+  keyemu_log_write(level, strlen(level));
+  keyemu_log_write(message, strlen(message));
+  keyemu_log_write("\r\n", 2);
+}
+
+static void cdc_log_hex2(const char *prefix, uint8_t a, uint8_t b) {
+  char buf[32];
+  int len = snprintf(buf, sizeof(buf), "%s%02X %02X\r\n", prefix, a, b);
+  if (len > 0) {
+    keyemu_log_write(buf, (size_t)len);
+  }
+}
+
+#define LOG_INFO(msg) cdc_log("INFO: ", (msg))
+#if KEYEMU_DEBUG
+#define LOG_DEBUG(msg) cdc_log("DEBUG: ", (msg))
+#define LOG_DEBUG_PKT(a, b) cdc_log_hex2("DEBUG: rx ", (a), (b))
+#else
+#define LOG_DEBUG(msg) do {} while (0)
+#define LOG_DEBUG_PKT(a, b) do {} while (0)
+#endif
 
 // --------------------------------------------------------------------
 // PIO USB HID descriptors (keyboard only)
@@ -151,6 +179,7 @@ void core1_main() {
   init_string_desc();
   pio_usb_device = pio_usb_device_init(&pio_cfg, &pio_desc);
   pio_hid_ep = pio_usb_get_endpoint(pio_usb_device, 1);
+  LOG_INFO("PIO USB HID initialized");
 
   while (true) {
     pio_usb_device_task();
@@ -162,6 +191,7 @@ void core1_main() {
         .modifier = (uint8_t)((packed >> 8) & 0xFF),
       };
       if (key.keycode != 0) {
+        LOG_DEBUG_PKT(key.keycode, key.modifier);
         pio_send_key(&key);
       }
     }
@@ -180,13 +210,19 @@ int main(void) {
 
   sleep_ms(100);
   tud_init(0);
+  LOG_INFO("keyemu boot");
+  LOG_INFO("CDC device ready");
 
   while (true) {
     tud_task();
+    keyemu_log_flush();
 
     if (tud_cdc_available()) {
       uint8_t buf[64];
       uint32_t count = tud_cdc_read(buf, sizeof(buf));
+      if (count > 0) {
+        LOG_DEBUG("CDC RX data");
+      }
       static bool have_keycode = false;
       static uint8_t pending_keycode = 0;
 

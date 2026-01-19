@@ -15,6 +15,10 @@
 #define CFG_TUSB_OS               OPT_OS_PICO
 #define CFG_TUD_ENABLED           1
 #define CFG_TUH_ENABLED           0
+#define CFG_TUSB_DEBUG            3
+
+// Route TinyUSB debug logs to CDC TX.
+#define CFG_TUSB_DEBUG_PRINTF keyemu_tusb_debug_printf
 
 #ifndef CFG_TUSB_MEM_SECTION
 #define CFG_TUSB_MEM_SECTION
