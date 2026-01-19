@@ -139,6 +139,7 @@ typedef struct {
 } hid_key_t;
 
 // Small ring buffer to absorb CDC bursts without blocking USB tasks.
+// This lives on core0 and feeds the multicore FIFO opportunistically.
 #define KEYEMU_QUEUE_LEN 64
 static uint16_t key_queue[KEYEMU_QUEUE_LEN];
 static uint16_t key_queue_head = 0;
@@ -281,6 +282,7 @@ int main(void) {
 
     bool connected = tud_cdc_connected();
     if (was_connected && !connected) {
+      // Drop partial packets on disconnect to avoid stale pairing later.
       have_keycode = false;
       pending_keycode = 0;
       last_rx_time_valid = false;
@@ -289,6 +291,7 @@ int main(void) {
     if (have_keycode && last_rx_time_valid) {
       int64_t age_us = absolute_time_diff_us(last_rx_time, get_absolute_time());
       if (age_us > 200000) {
+        // If a second byte never arrives, discard the pending keycode.
         have_keycode = false;
         pending_keycode = 0;
         last_rx_time_valid = false;
@@ -299,6 +302,7 @@ int main(void) {
     size_t free_packets = key_queue_free_space();
     size_t max_bytes = free_packets * 2;
     if (have_keycode) {
+      // Allow one extra byte to complete a pending keycode.
       if (max_bytes == 0) {
         continue;
       }
@@ -334,6 +338,7 @@ int main(void) {
           if (!key_queue_push(packed)) {
             dropped_queue++;
             if ((dropped_queue & 0x3F) == 1) {
+              // Throttle noisy logs while still indicating drops.
               LOG_DEBUG("CDC RX drop: queue full");
             }
           }
