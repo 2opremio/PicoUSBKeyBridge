@@ -74,18 +74,32 @@ void keyemu_log_flush(void) {
   log_lock_init();
   uint32_t save = spin_lock_blocking(log_lock);
   bool overflowed = log_overflow;
-  log_overflow = false;
   spin_unlock(log_lock, save);
 
   if (overflowed) {
     static const char overflow_msg[] = "WARN: log buffer overflow\r\n";
-    tud_cdc_write(overflow_msg, sizeof(overflow_msg) - 1);
+    size_t overflow_len = sizeof(overflow_msg) - 1;
+    if (tud_cdc_write_available() < overflow_len) {
+      return;
+    }
+    tud_cdc_write(overflow_msg, (uint32_t)overflow_len);
+    save = spin_lock_blocking(log_lock);
+    log_overflow = false;
+    spin_unlock(log_lock, save);
   }
 
   uint8_t chunk[64];
   while (true) {
+    uint32_t available = tud_cdc_write_available();
+    if (available == 0) {
+      break;
+    }
+    size_t max_len = sizeof(chunk);
+    if (available < max_len) {
+      max_len = (size_t)available;
+    }
     save = spin_lock_blocking(log_lock);
-    size_t count = log_pop_chunk(chunk, sizeof(chunk));
+    size_t count = log_pop_chunk(chunk, max_len);
     spin_unlock(log_lock, save);
 
     if (count == 0) {

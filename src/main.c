@@ -216,6 +216,17 @@ int main(void) {
   while (true) {
     tud_task();
     keyemu_log_flush();
+    static bool was_connected = false;
+    static bool have_keycode = false;
+    static uint8_t pending_keycode = 0;
+    static uint32_t dropped_fifo = 0;
+
+    bool connected = tud_cdc_connected();
+    if (was_connected && !connected) {
+      have_keycode = false;
+      pending_keycode = 0;
+    }
+    was_connected = connected;
 
     if (tud_cdc_available()) {
       uint8_t buf[64];
@@ -223,8 +234,6 @@ int main(void) {
       if (count > 0) {
         LOG_DEBUG("CDC RX data");
       }
-      static bool have_keycode = false;
-      static uint8_t pending_keycode = 0;
 
       for (uint32_t i = 0; i < count; i++) {
         if (!have_keycode) {
@@ -236,7 +245,14 @@ int main(void) {
         uint8_t modifier = buf[i];
         uint32_t packed = (uint32_t)pending_keycode | ((uint32_t)modifier << 8);
         if (pending_keycode != 0) {
-          multicore_fifo_push_blocking(packed);
+          if (multicore_fifo_wready()) {
+            multicore_fifo_push_blocking(packed);
+          } else {
+            dropped_fifo++;
+            if ((dropped_fifo & 0x3F) == 1) {
+              LOG_DEBUG("CDC RX drop: FIFO full");
+            }
+          }
         }
         have_keycode = false;
       }
