@@ -111,6 +111,17 @@ Build/run:
 go run ./cmd/picousbridged
 ```
 
+macOS deployment:
+
+```
+./scripts/deploy_macos.sh
+```
+
+Other systems:
+
+- Linux: use `systemd` (not included yet).
+- Windows: TBD.
+
 Flags:
 
 - `-host` (default: `localhost`)
