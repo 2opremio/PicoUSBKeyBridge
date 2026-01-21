@@ -209,21 +209,17 @@ static bool key_queue_pop(uint16_t *out) {
   return true;
 }
 
-static void pio_send_key(const hid_key_t *key) {
-  if (pio_usb_device == NULL || pio_hid_ep == NULL) {
-    return;
+static bool pio_can_send_report(void) {
+  return pio_usb_device != NULL &&
+         pio_hid_ep != NULL &&
+         !pio_hid_ep->has_transfer;
+}
+
+static bool pio_send_report(const hid_keyboard_report_t *report) {
+  if (!pio_can_send_report()) {
+    return false;
   }
-
-  // HID report on the PIO USB (USB A port) device stack.
-  hid_keyboard_report_t report = {0};
-  report.modifier = key->modifier;
-  report.keycode[0] = key->keycode;
-  pio_usb_set_out_data(pio_hid_ep, (uint8_t *)&report, sizeof(report));
-  sleep_ms(2);
-
-  hid_keyboard_report_t release = {0};
-  pio_usb_set_out_data(pio_hid_ep, (uint8_t *)&release, sizeof(release));
-  sleep_ms(2);
+  return pio_usb_set_out_data(pio_hid_ep, (uint8_t *)report, sizeof(*report)) == 0;
 }
 
 // --------------------------------------------------------------------
@@ -273,6 +269,9 @@ void core1_main() {
   core1_initialized = true;
   core1_last_seen_us = time_us_32();
 
+  hid_key_t pending_key = {0};
+  uint8_t pending_stage = 0; // 0 = idle, 1 = send press, 2 = send release
+
   while (true) {
     // Update health timestamp for watchdog monitoring
     core1_last_seen_us = time_us_32();
@@ -280,16 +279,33 @@ void core1_main() {
     // Keep the PIO USB device running on the USB A port.
     pio_usb_device_task();
 
-    // Consume key packets from core0 and emit HID reports over PIO USB.
-    while (multicore_fifo_rvalid()) {
+    // Emit pending HID reports over PIO USB in non-blocking steps.
+    if (pending_stage != 0) {
+      if (pio_can_send_report()) {
+        if (pending_stage == 1) {
+          hid_keyboard_report_t report = {0};
+          report.modifier = pending_key.modifier;
+          report.keycode[0] = pending_key.keycode;
+          if (pio_send_report(&report)) {
+            pending_stage = 2;
+          }
+        } else {
+          hid_keyboard_report_t release = {0};
+          if (pio_send_report(&release)) {
+            pending_stage = 0;
+          }
+        }
+      }
+    }
+
+    // Consume key packets from core0 only when idle, then send press/release.
+    if (pending_stage == 0 && multicore_fifo_rvalid()) {
       uint32_t packed = multicore_fifo_pop_blocking();
-      hid_key_t key = {
-        .keycode = (uint8_t)(packed & 0xFF),
-        .modifier = (uint8_t)((packed >> 8) & 0xFF),
-      };
-      if (key.keycode != 0) {
-        LOG_DEBUG_PKT(key.keycode, key.modifier);
-        pio_send_key(&key);
+      pending_key.keycode = (uint8_t)(packed & 0xFF);
+      pending_key.modifier = (uint8_t)((packed >> 8) & 0xFF);
+      if (pending_key.keycode != 0) {
+        LOG_DEBUG_PKT(pending_key.keycode, pending_key.modifier);
+        pending_stage = 1;
       }
     }
   }
