@@ -22,7 +22,7 @@ const (
 	defaultBaudRate    = 115200
 	usbbridgePacketLen = 2
 	defaultWriteQueue  = 1
-	maxLogLineBytes    = 4096
+	maxLogLineBytes    = 16384
 )
 
 var errDeviceNotFound = errors.New("usbbridge device not found")
@@ -349,9 +349,9 @@ func (m *Manager) connect() error {
 	if err != nil {
 		return err
 	}
-	port, err := serial.Open(portName, &serial.Mode{BaudRate: defaultBaudRate})
+	port, err := m.openPortWithRetry(portName)
 	if err != nil {
-		return fmt.Errorf("open usbbridge port %q: %w", portName, err)
+		return err
 	}
 	if err := port.SetDTR(true); err != nil {
 		m.logger.Warn("set DTR failed", "error", err)
@@ -359,6 +359,33 @@ func (m *Manager) connect() error {
 	m.setPort(port, portName)
 	m.logger.Info("connected", "port", portName)
 	return nil
+}
+
+func (m *Manager) openPortWithRetry(portName string) (serial.Port, error) {
+	const maxAttempts = 5
+	delay := 150 * time.Millisecond
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		port, err := serial.Open(portName, &serial.Mode{BaudRate: defaultBaudRate})
+		if err == nil {
+			return port, nil
+		}
+		lastErr = err
+		if !isSerialPortBusy(err) || attempt == maxAttempts {
+			return nil, fmt.Errorf("open usbbridge port %q: %w", portName, err)
+		}
+		time.Sleep(delay)
+		delay += 150 * time.Millisecond
+	}
+	return nil, fmt.Errorf("open usbbridge port %q busy after %d attempts: %w", portName, maxAttempts, lastErr)
+}
+
+func isSerialPortBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "busy") || strings.Contains(msg, "resource busy")
 }
 
 func (m *Manager) setPort(port serial.Port, name string) {
