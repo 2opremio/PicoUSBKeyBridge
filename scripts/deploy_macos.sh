@@ -22,11 +22,8 @@ echo "Binary built successfully: $BINARY_PATH"
 
 mkdir -p "$HOME/Library/LaunchAgents"
 
-if launchctl list | grep -q "$SERVICE_ID"; then
-    echo "Stopping existing service..."
-    launchctl bootout "$SERVICE_DOMAIN/$SERVICE_ID" 2>/dev/null || true
-    launchctl remove "$SERVICE_ID" 2>/dev/null || true
-fi
+echo "Stopping existing service (if any)..."
+"$SCRIPT_DIR/stop_macos.sh"
 
 echo "Generating plist file at $PLIST_PATH..."
 cat > "$PLIST_PATH" <<EOF
