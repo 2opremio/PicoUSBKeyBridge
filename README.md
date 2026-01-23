@@ -25,7 +25,7 @@ I am using the [Waveshare RP2350-USB-A](https://www.waveshare.com/rp2350-usb-a.h
 with an [FT232 adapter](https://www.az-delivery.de/en/products/ftdi-adapter-ft232rl).
 The default wiring below matches that board’s header and the adapter’s labeled pins.
 
-![My setup (annotated)](img/mysetup-annotated.jpeg)
+<img src="img/mysetup-annotated.jpeg" alt="My setup (annotated)" width="600" />
 
 Note: the Waveshare RP2350-USB-A USB-A port on that board is **unused** in this firmware; the USB-C port
 is the HID device port. I originally picked the Waveshare RP2350-USB-A because I
