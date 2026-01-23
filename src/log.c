@@ -12,28 +12,34 @@
 
 #include "pico/stdio.h"
 
-void log_write_line(const char *level, const char *message) {
-  if (level == NULL || message == NULL) {
-    return;
+static int log_write_line_v(const char *level, const char *format, va_list args) {
+  if (format == NULL) {
+    return 0;
   }
-  log_write(level, strlen(level));
-  log_write(message, strlen(message));
-  log_write("\r\n", 2);
+  char buffer[256];
+  int len = vsnprintf(buffer, sizeof(buffer), format, args);
+  if (len <= 0) {
+    return len;
+  }
+  size_t write_len = (size_t)len;
+  if (write_len >= sizeof(buffer)) {
+    write_len = sizeof(buffer) - 1;
+  }
+  if (level != NULL && level[0] != '\0') {
+    log_write(level, strlen(level));
+  }
+  log_write(buffer, write_len);
+  if (write_len == 0 || buffer[write_len - 1] != '\n') {
+    log_write("\r\n", 2);
+  }
+  return len;
 }
 
-void log_write_hex2(const char *prefix, uint8_t a, uint8_t b) {
-  if (prefix == NULL) {
-    return;
-  }
-  char buf[32];
-  int len = snprintf(buf, sizeof(buf), "%s%02X %02X\r\n", prefix, a, b);
-  if (len > 0) {
-    size_t write_len = (size_t)len;
-    if (write_len >= sizeof(buf)) {
-      write_len = sizeof(buf) - 1;
-    }
-    log_write(buf, write_len);
-  }
+void log_write_line(const char *level, const char *format, ...) {
+  va_list args;
+  va_start(args, format);
+  (void)log_write_line_v(level, format, args);
+  va_end(args);
 }
 
 void log_write(const char *data, size_t len) {
@@ -52,7 +58,7 @@ void log_flush(void) {
 int log_tusb_debug_printf(const char *format, ...) {
   va_list args;
   va_start(args, format);
-  int len = vprintf(format, args);
+  int len = log_write_line_v("", format, args);
   va_end(args);
   return len;
 }

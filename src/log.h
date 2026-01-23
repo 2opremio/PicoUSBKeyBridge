@@ -17,17 +17,16 @@ void log_write(const char *data, size_t len);
 void log_flush(void);
 
 // Logging helpers
-void log_write_line(const char *level, const char *message);
-void log_write_hex2(const char *prefix, uint8_t a, uint8_t b);
+void log_write_line(const char *level, const char *format, ...);
 
-#define LOG_INFO(msg) log_write_line("INFO: ", (msg))
-#define LOG_WARN(msg) log_write_line("WARN: ", (msg))
-#define LOG_ERROR(msg) log_write_line("ERROR: ", (msg))
+#define LOG_INFO(...) log_write_line("INFO: ", __VA_ARGS__)
+#define LOG_WARN(...) log_write_line("WARN: ", __VA_ARGS__)
+#define LOG_ERROR(...) log_write_line("ERROR: ", __VA_ARGS__)
 #if PUSBKB_DEBUG
-#define LOG_DEBUG(msg) log_write_line("DEBUG: ", (msg))
-#define LOG_DEBUG_PKT(a, b) log_write_hex2("DEBUG: rx ", (a), (b))
+#define LOG_DEBUG(...) log_write_line("DEBUG: ", __VA_ARGS__)
+#define LOG_DEBUG_PKT(a, b) LOG_DEBUG("rx %02X %02X", (a), (b))
 #else
-#define LOG_DEBUG(msg) do {} while (0)
+#define LOG_DEBUG(...) do {} while (0)
 #define LOG_DEBUG_PKT(a, b) do {} while (0)
 #endif
 

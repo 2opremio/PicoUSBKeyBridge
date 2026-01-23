@@ -253,7 +253,7 @@ int main(void) {
   if (!tud_init(0)) {
     LOG_ERROR("tud_init failed");
   }
-  log_tusb_debug_printf("TinyUSB debug level %d\r\n", CFG_TUSB_DEBUG);
+  LOG_INFO("TinyUSB debug level %d", CFG_TUSB_DEBUG);
   LOG_INFO("build " PUSBKB_GIT_COMMIT);
 
   if (watchdog_reboot) {
