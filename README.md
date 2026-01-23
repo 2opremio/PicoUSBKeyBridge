@@ -307,3 +307,8 @@ cmake -S . -B build \
   -DPUSBKB_UART_RX_PIN=5 \
   -DPUSBKB_UART_BAUDRATE=115200
 ```
+
+## Porting
+
+The firmware is Raspberry Pi Pico-specific, however, it should be easy to port to other boards
+using TinyUSB (which is how the HID USB side is implemented).
