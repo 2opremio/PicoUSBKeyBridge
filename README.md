@@ -22,8 +22,8 @@ Use cases:
 ## Example hardware
 
 I am using the [Waveshare RP2350-USB-A](https://www.waveshare.com/rp2350-usb-a.htm)
-with an [FT232 adapter](https://www.az-delivery.de/en/products/ftdi-adapter-ft232rl).
-The default wiring below matches that board’s header and the adapter’s labeled pins.
+with an [FT232 adapter](https://www.az-delivery.de/en/products/ftdi-adapter-ft232rl) and the default pin mapping.
+You can, however use your own board and adapter and custom pin mapping.
 
 <img src="img/mysetup-annotated.jpeg" alt="My setup (annotated)" width="600" />
 
