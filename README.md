@@ -1,8 +1,8 @@
 # PicoUSBKeyBridge
 
-`PicoUSBKeyBridge` is a bridge firmware for Raspberry Pi Pico-class boards. It
+PicoUSBKeyBridge turns a Raspberry Pi Pico into a wired keyboard emulator. It
 accepts key event packets over UART and exposes a USB HID keyboard to a target
-host over the board’s USB port.
+host.
 
 It lets you programmatically send key events to a host that supports USB HID keyboards.
 
