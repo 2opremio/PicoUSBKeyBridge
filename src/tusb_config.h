@@ -41,7 +41,7 @@
 
 //------------- CLASS -------------//
 #define CFG_TUD_CDC              0
-#define CFG_TUD_HID              1
+#define CFG_TUD_HID              2
 
 // Used by HID descriptor sizing.
 #define CFG_TUD_HID_EP_BUFSIZE   64

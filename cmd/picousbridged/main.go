@@ -22,6 +22,10 @@ import (
 )
 
 const (
+	pusbkbKeyboardFlagAppleFn = 0x01
+)
+
+const (
 	defaultHost         = "localhost"
 	defaultPort         = 8080
 	defaultSendTimeoutS = 2
@@ -32,7 +36,7 @@ const (
 func main() {
 	host := flag.String("host", defaultHost, "Host to bind the HTTP server to")
 	port := flag.Int("port", defaultPort, "Port to bind the HTTP server to")
-	sendTimeoutSeconds := flag.Int("send-timeout", defaultSendTimeoutS, "Seconds to wait when queueing a keypress")
+	sendTimeoutSeconds := flag.Int("send-timeout", defaultSendTimeoutS, "Seconds to wait when queueing an event")
 	vidFlag := flag.String("vid", defaultVID, "USB VID of the serial adapter (hex)")
 	pidFlag := flag.String("pid", defaultPID, "USB PID of the serial adapter (hex)")
 	flag.Parse()
@@ -98,42 +102,131 @@ func parseUSBID(value string) (uint16, error) {
   return uint16(parsed), nil
 }
 
-type keypressResponse struct {
+type pressReleaseResponse struct {
 	Status string `json:"status"`
 }
 
 func newHandler(manager *device.Manager, sendTimeout time.Duration) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/keypress", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/pressandrelease", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		var req usbbridge.KeypressRequest
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&req); err != nil {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		req, err := decodeEventRequest(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := decoder.Decode(&struct{}{}); err != io.EOF {
-			http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		// code=0 is allowed only for modifier-only keyboard events.
+		if req.Code == 0 && (strings.TrimSpace(req.Type) != "" && strings.ToLower(strings.TrimSpace(req.Type)) != "keyboard") {
+			http.Error(w, "missing code", http.StatusBadRequest)
 			return
 		}
-
-		if req.HIDCode == 0 {
-			http.Error(w, "missing hid_code", http.StatusBadRequest)
+		if req.Code == 0 && !hasModifiers(req.Modifiers) {
+			http.Error(w, "missing code", http.StatusBadRequest)
 			return
 		}
 		sendCtx, cancel := context.WithTimeout(r.Context(), sendTimeout)
 		defer cancel()
-		if err := manager.Send(sendCtx, req.HIDCode, req.ModifierMask()); err != nil {
+		if err := sendEvent(sendCtx, manager, req); err != nil {
 			http.Error(w, fmt.Sprintf("send failed: %v", err), http.StatusServiceUnavailable)
 			return
 		}
-
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(keypressResponse{Status: "ok"})
+		_ = json.NewEncoder(w).Encode(pressReleaseResponse{Status: "ok"})
 	})
+
 	return mux
+}
+
+func decodeEventRequest(r *http.Request) (usbbridge.PressAndReleaseRequest, error) {
+	var req usbbridge.PressAndReleaseRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		return req, fmt.Errorf("invalid JSON body")
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return req, fmt.Errorf("invalid JSON body")
+	}
+	if strings.TrimSpace(req.Type) == "" {
+		req.Type = "keyboard"
+	}
+	return req, nil
+}
+
+func sendEvent(ctx context.Context, manager *device.Manager, req usbbridge.PressAndReleaseRequest) error {
+	switch strings.ToLower(strings.TrimSpace(req.Type)) {
+	case "keyboard":
+		if req.Code > 0xFF {
+			return fmt.Errorf("keyboard code must fit in uint8")
+		}
+		modifier := modifierMask(req.Modifiers)
+		flags := byte(0)
+		if appleFnEnabled(req.Modifiers) {
+			flags = pusbkbKeyboardFlagAppleFn
+		}
+		if err := manager.SendKeyboard(ctx, req.Code, modifier, flags, false); err != nil {
+			return err
+		}
+		return manager.SendKeyboard(ctx, req.Code, modifier, flags, true)
+	case "consumer":
+		if err := manager.SendConsumer(ctx, req.Code, false); err != nil {
+			return err
+		}
+		return manager.SendConsumer(ctx, req.Code, true)
+	case "vendor":
+		if err := manager.SendVendor(ctx, req.Code, false); err != nil {
+			return err
+		}
+		return manager.SendVendor(ctx, req.Code, true)
+	default:
+		return fmt.Errorf("invalid type: %s", req.Type)
+	}
+}
+
+func modifierMask(req *usbbridge.PressAndReleaseModifiers) byte {
+	if req == nil {
+		return 0
+	}
+	var mask byte
+	if req.LeftCtrl {
+		mask |= 0x01
+	}
+	if req.LeftShift {
+		mask |= 0x02
+	}
+	if req.LeftAlt {
+		mask |= 0x04
+	}
+	if req.LeftGUI {
+		mask |= 0x08
+	}
+	if req.RightCtrl {
+		mask |= 0x10
+	}
+	if req.RightShift {
+		mask |= 0x20
+	}
+	if req.RightAlt {
+		mask |= 0x40
+	}
+	if req.RightGUI {
+		mask |= 0x80
+	}
+	return mask
+}
+
+func appleFnEnabled(req *usbbridge.PressAndReleaseModifiers) bool {
+	return req != nil && req.AppleFn
+}
+
+func hasModifiers(req *usbbridge.PressAndReleaseModifiers) bool {
+	if req == nil {
+		return false
+	}
+	return req.LeftCtrl || req.LeftShift || req.LeftAlt || req.LeftGUI ||
+		req.RightCtrl || req.RightShift || req.RightAlt || req.RightGUI ||
+		req.AppleFn
 }

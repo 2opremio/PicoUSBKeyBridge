@@ -15,6 +15,7 @@
 #include "pico/stdio_uart.h"
 
 #include "class/hid/hid_device.h"
+#include "hid_reports.h"
 #include "log.h"
 #include "tusb.h"
 
@@ -27,17 +28,36 @@
 
 // --------------------------------------------------------------------
 // UART protocol -> HID mapping
+//
+// Packet format (5 bytes):
+//   [type] [code_lo] [code_hi] [modifier] [flags]
+//
+// type byte:
+//   - low nibble: 0 = keyboard, 1 = consumer, 2 = vendor
+//   - bit 7: set for release, clear for press
+//
+// Keyboard payload: 16-bit code + modifier byte
+// Consumer/vendor payload: 16-bit usage (little-endian)
 // --------------------------------------------------------------------
 
 typedef struct {
-  uint8_t keycode;
+  uint16_t keycode;
   uint8_t modifier;
+  bool apple_fn;
 } hid_key_t;
+
+typedef enum {
+  RX_MODE_TYPE = 0,
+  RX_MODE_CODE_LO,
+  RX_MODE_CODE_HI,
+  RX_MODE_MODIFIER,
+  RX_MODE_FLAGS,
+} uart_rx_mode_t;
 
 // Small ring buffer to absorb CDC bursts without blocking USB tasks.
 // This lives on core0 and feeds the multicore FIFO opportunistically.
 #define PUSBKB_QUEUE_LEN 64
-static uint16_t key_queue[PUSBKB_QUEUE_LEN];
+static uint64_t key_queue[PUSBKB_QUEUE_LEN];
 static uint16_t key_queue_head = 0;
 static uint16_t key_queue_tail = 0;
 
@@ -52,7 +72,7 @@ static size_t key_queue_free_space(void) {
   return (key_queue_tail - key_queue_head) - 1;
 }
 
-static bool key_queue_push(uint16_t packed) {
+static bool key_queue_push(uint64_t packed) {
   if (key_queue_free_space() == 0) {
     return false;
   }
@@ -61,7 +81,7 @@ static bool key_queue_push(uint16_t packed) {
   return true;
 }
 
-static bool key_queue_pop(uint16_t *out) {
+static bool key_queue_pop(uint64_t *out) {
   if (key_queue_is_empty()) {
     return false;
   }
@@ -88,8 +108,12 @@ static bool key_queue_pop(uint16_t *out) {
 #endif
 
 typedef struct {
-  bool have_keycode;
-  uint8_t pending_keycode;
+  uart_rx_mode_t rx_mode;
+  uint8_t pending_type;
+  uint8_t pending_code_lo;
+  uint8_t pending_code_hi;
+  uint8_t pending_modifier;
+  uint8_t pending_flags;
   uint32_t dropped_queue;
   absolute_time_t last_rx_time;
   bool last_rx_time_valid;
@@ -112,13 +136,17 @@ static void uart_configure(void) {
 }
 
 static void uart_update_state(uart_rx_state_t *state) {
-  if (state->have_keycode && state->last_rx_time_valid) {
+  if (state->rx_mode != RX_MODE_TYPE && state->last_rx_time_valid) {
     int64_t age_us = absolute_time_diff_us(state->last_rx_time,
                                            get_absolute_time());
     if (age_us > 200000) {
-      // Drop an incomplete packet if the modifier byte never arrives.
-      state->have_keycode = false;
-      state->pending_keycode = 0;
+      // Drop an incomplete packet if the payload never arrives.
+      state->rx_mode = RX_MODE_TYPE;
+      state->pending_type = 0;
+      state->pending_code_lo = 0;
+      state->pending_code_hi = 0;
+      state->pending_modifier = 0;
+      state->pending_flags = 0;
       state->last_rx_time_valid = false;
     }
   }
@@ -130,39 +158,103 @@ static void uart_handle_input(uart_rx_state_t *state) {
     uint8_t byte = uart_getc(uart);
     state->last_rx_time = get_absolute_time();
     state->last_rx_time_valid = true;
-    if (!state->have_keycode) {
-      state->pending_keycode = byte;
-      state->have_keycode = true;
-      continue;
-    }
-
-    uint8_t modifier = byte;
-    uint16_t packed = (uint16_t)state->pending_keycode |
-                      ((uint16_t)modifier << 8);
-    if (state->pending_keycode != 0) {
-      if (!key_queue_push(packed)) {
-        state->dropped_queue++;
-        if ((state->dropped_queue & 0x3F) == 1) {
-          LOG_DEBUG("UART RX drop: queue full");
+    switch (state->rx_mode) {
+      case RX_MODE_TYPE:
+        state->pending_type = byte;
+        state->rx_mode = RX_MODE_CODE_LO;
+        break;
+      case RX_MODE_CODE_LO:
+        state->pending_code_lo = byte;
+        state->rx_mode = RX_MODE_CODE_HI;
+        break;
+      case RX_MODE_CODE_HI:
+        state->pending_code_hi = byte;
+        state->rx_mode = RX_MODE_MODIFIER;
+        break;
+      case RX_MODE_MODIFIER:
+        state->pending_modifier = byte;
+        state->rx_mode = RX_MODE_FLAGS;
+        break;
+      case RX_MODE_FLAGS: {
+        state->pending_flags = byte;
+        uint64_t packed = ((uint64_t)state->pending_type << 32) |
+                          ((uint64_t)state->pending_flags << 24) |
+                          ((uint64_t)state->pending_modifier << 16) |
+                          ((uint64_t)state->pending_code_hi << 8) |
+                          (uint64_t)state->pending_code_lo;
+        if (!key_queue_push(packed)) {
+          state->dropped_queue++;
+          if ((state->dropped_queue & 0x3F) == 1) {
+            LOG_DEBUG("UART RX drop: queue full");
+          }
         }
+        state->rx_mode = RX_MODE_TYPE;
+        break;
       }
+      default:
+        state->rx_mode = RX_MODE_TYPE;
+        break;
     }
-    state->have_keycode = false;
   }
 }
 
 static void hid_send_press_release(const hid_key_t *key, uint8_t *stage) {
-  if (!tud_hid_ready()) {
+  if (!tud_hid_n_ready(PUSBKB_HID_ITF_KEYBOARD)) {
     return;
   }
   if (*stage == 1) {
     uint8_t keycodes[6] = {0};
-    keycodes[0] = key->keycode;
-    tud_hid_keyboard_report(0, key->modifier, keycodes);
+    keycodes[0] = (uint8_t)key->keycode;
+    struct __attribute__((packed)) {
+      uint8_t modifier;
+      uint8_t apple_fn;
+      uint8_t keycode[6];
+    } report = {
+      .modifier = key->modifier,
+      .apple_fn = key->apple_fn ? 1 : 0,
+    };
+    memcpy(report.keycode, keycodes, sizeof(keycodes));
+    tud_hid_n_report(PUSBKB_HID_ITF_KEYBOARD, 0, &report, sizeof(report));
     *stage = 2;
   } else if (*stage == 2) {
-    uint8_t empty[6] = {0};
-    tud_hid_keyboard_report(0, 0, empty);
+    struct __attribute__((packed)) {
+      uint8_t modifier;
+      uint8_t apple_fn;
+      uint8_t keycode[6];
+    } report = {0};
+    tud_hid_n_report(PUSBKB_HID_ITF_KEYBOARD, 0, &report, sizeof(report));
+    *stage = 0;
+  }
+}
+
+static void hid_send_consumer_press_release(uint16_t usage, uint8_t *stage) {
+  if (!tud_hid_n_ready(PUSBKB_HID_ITF_AUX)) {
+    return;
+  }
+  if (*stage == 1) {
+    tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_CONSUMER,
+                     &usage, sizeof(usage));
+    *stage = 2;
+  } else if (*stage == 2) {
+    uint16_t zero = 0;
+    tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_CONSUMER,
+                     &zero, sizeof(zero));
+    *stage = 0;
+  }
+}
+
+static void hid_send_vendor_press_release(uint16_t usage, uint8_t *stage) {
+  if (!tud_hid_n_ready(PUSBKB_HID_ITF_AUX)) {
+    return;
+  }
+  if (*stage == 1) {
+    tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_VENDOR,
+                     &usage, sizeof(usage));
+    *stage = 2;
+  } else if (*stage == 2) {
+    uint16_t zero = 0;
+    tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_VENDOR,
+                     &zero, sizeof(zero));
     *stage = 0;
   }
 }
@@ -170,19 +262,62 @@ static void hid_send_press_release(const hid_key_t *key, uint8_t *stage) {
 static void hid_queue_task(void) {
   static hid_key_t pending_key = {0};
   static uint8_t pending_stage = 0; // 0 = idle, 1 = send press, 2 = send release
+  static pusbkb_pkt_type_t pending_type = PUSBKB_PKT_TYPE_KEYBOARD;
+  static uint16_t pending_usage = 0;
 
   if (pending_stage != 0) {
-    hid_send_press_release(&pending_key, &pending_stage);
+    if (pending_type == PUSBKB_PKT_TYPE_KEYBOARD) {
+      hid_send_press_release(&pending_key, &pending_stage);
+    } else if (pending_type == PUSBKB_PKT_TYPE_CONSUMER) {
+      hid_send_consumer_press_release(pending_usage, &pending_stage);
+    } else if (pending_type == PUSBKB_PKT_TYPE_VENDOR) {
+      hid_send_vendor_press_release(pending_usage, &pending_stage);
+    } else {
+      pending_stage = 0;
+    }
     return;
   }
 
-  uint16_t packed;
+  uint64_t packed;
   if (key_queue_pop(&packed)) {
-    pending_key.keycode = (uint8_t)(packed & 0xFF);
-    pending_key.modifier = (uint8_t)((packed >> 8) & 0xFF);
-    if (pending_key.keycode != 0) {
-      LOG_DEBUG_PKT(pending_key.keycode, pending_key.modifier);
+    uint8_t type_byte = (uint8_t)((packed >> 32) & 0xFF);
+    pending_type = (pusbkb_pkt_type_t)(type_byte & PUSBKB_PKT_TYPE_MASK);
+    bool is_release = (type_byte & PUSBKB_PKT_FLAG_RELEASE) != 0;
+
+    if (pending_type == PUSBKB_PKT_TYPE_KEYBOARD) {
+      pending_key.keycode = (uint16_t)(packed & 0xFFFF);
+      pending_key.modifier = (uint8_t)((packed >> 16) & 0xFF);
+      pending_key.apple_fn = ((packed >> 24) & PUSBKB_KBD_FLAG_APPLE_FN) != 0;
+      if (is_release) {
+        struct __attribute__((packed)) {
+          uint8_t modifier;
+          uint8_t apple_fn;
+          uint8_t keycode[6];
+        } report = {0};
+        tud_hid_n_report(PUSBKB_HID_ITF_KEYBOARD, 0, &report, sizeof(report));
+        return;
+      }
+      LOG_DEBUG_PKT((uint8_t)pending_key.keycode, pending_key.modifier);
       pending_stage = 1;
+      return;
+    }
+
+    if (pending_type == PUSBKB_PKT_TYPE_CONSUMER ||
+        pending_type == PUSBKB_PKT_TYPE_VENDOR) {
+      pending_usage = (uint16_t)(packed & 0xFFFF);
+      if (is_release) {
+        uint16_t zero = 0;
+        if (pending_type == PUSBKB_PKT_TYPE_CONSUMER) {
+          tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_CONSUMER,
+                           &zero, sizeof(zero));
+        } else {
+          tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_VENDOR,
+                           &zero, sizeof(zero));
+        }
+        return;
+      }
+      pending_stage = 1;
+      return;
     }
   }
 }
@@ -196,22 +331,33 @@ static void hid_test_task(void) {
     next_time = make_timeout_time_ms(0);
     initialized = true;
   }
-  if (!tud_mounted() || !tud_hid_ready()) {
+  if (!tud_mounted() || !tud_hid_n_ready(PUSBKB_HID_ITF_KEYBOARD)) {
     return;
   }
   if (!time_reached(next_time)) {
     return;
   }
 
-  uint8_t keycodes[6] = {0};
-  keycodes[0] = HID_KEY_A;
   if (stage == 0) {
-    tud_hid_keyboard_report(0, KEYBOARD_MODIFIER_LEFTSHIFT, keycodes);
+    struct __attribute__((packed)) {
+      uint8_t modifier;
+      uint8_t apple_fn;
+      uint8_t keycode[6];
+    } report = {
+      .modifier = KEYBOARD_MODIFIER_LEFTSHIFT,
+      .apple_fn = 0,
+      .keycode = {HID_KEY_A, 0, 0, 0, 0, 0},
+    };
+    tud_hid_n_report(PUSBKB_HID_ITF_KEYBOARD, 0, &report, sizeof(report));
     stage = 1;
     next_time = make_timeout_time_ms(5);
   } else {
-    uint8_t empty[6] = {0};
-    tud_hid_keyboard_report(0, 0, empty);
+    struct __attribute__((packed)) {
+      uint8_t modifier;
+      uint8_t apple_fn;
+      uint8_t keycode[6];
+    } report = {0};
+    tud_hid_n_report(PUSBKB_HID_ITF_KEYBOARD, 0, &report, sizeof(report));
     stage = 0;
     next_time = make_timeout_time_ms(1000);
   }

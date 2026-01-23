@@ -1,17 +1,17 @@
 # PicoUSBKeyBridge
 
 `PicoUSBKeyBridge` is a bridge firmware for Raspberry Pi Pico-class boards. It
-accepts keypress packets over UART and exposes a USB HID keyboard to a target
+accepts key event packets over UART and exposes a USB HID keyboard to a target
 host over the board’s USB port.
 
-It lets you programmatically send keypress events to a host that supports USB
-HID keyboards.
+It lets you programmatically send key events to a host that supports USB HID keyboards.
 
 Use cases:
 - Automate kiosk or demo devices that only accept USB keyboards.
 - Drive hardware test rigs that need deterministic input events.
-- Programmatically emulate keyboard keypresses from software workflows.
-- Remotely send keypresses to a closed device that doesn't allow remote control (e.g., iPhone, iPad).
+- Programmatically emulate keyboard input from software workflows.
+- Remotely send key events to a device without OS-level remote control (e.g., iPhone, iPad).
+- I use it to send hotkeys to my iPad from when hitting drums in my eDrumkit :)
 
 ## What you need
 
@@ -40,6 +40,9 @@ moved to TinyUSB over USB-C for HID and used the UART adapter for control/loggin
    - CMake
    - Ninja
    - GNU Arm Embedded toolchain (`arm-none-eabi-gcc`)
+
+Note: the firmware presents itself as an Apple Magic Keyboard (VID/PID) so
+macOS/iPadOS will enable Apple-specific Fn/Globe behaviors.
 
 2. Initialize submodules:
 ```
@@ -79,13 +82,25 @@ See `UART configuration` below to change the pin mapping.
 
 ## Serial protocol
 
-The UART interface expects a fixed 2-byte packet at 115200 baud:
+The UART interface uses a fixed 5-byte packet format. UART is 115200 baud by default.
 
-- **Byte 0**: USB HID keycode
-- **Byte 1**: modifier bitmap
+### Packet format (5 bytes)
 
-USB HID keyboard keycodes are defined in the HID Usage Tables (Keyboard/Keypad page)
-and in TinyUSB’s `hid.h` constants.
+- **Byte 0**: type byte
+  - low nibble indicates payload type: `0x00` keyboard, `0x01` consumer control, `0x02` vendor
+  - bit 7 set: release event (not set, press event)
+- **Byte 1**: code low byte
+- **Byte 2**: code high byte
+- **Byte 3**: modifier byte (keyboard only, else 0)
+- **Byte 4**: flags byte (keyboard only, else 0)
+  - bit 0: Apple Fn (sets the KeyboardFn byte in the report)
+
+Keyboard payload is `code + modifier + flags` (keycodes are 8-bit; high byte should be 0).
+
+Consumer/vendor payload uses the 16-bit code (little-endian); modifier/flags should be 0.
+
+The code in keyboard payloads uses USB HID keyboard keycodes. They are defined in the HID Usage Tables (Keyboard/Keypad page)
+and in TinyUSB’s `hid.h` constants (which may be easier to browse):
 - HID Usage Tables (Keyboard/Keypad): https://usb.org/sites/default/files/hut1_4.pdf
 - TinyUSB keycode definitions: https://github.com/hathach/tinyusb/blob/6e891c6dc716d6ae91fdc54aaec2899f788e14fc/src/class/hid/hid.h#L389-L391
 
@@ -100,22 +115,54 @@ Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
 - `0x40` Right Alt / Option (⌥)
 - `0x80` Right GUI / Command (⌘)
 
-Each packet generates a key press followed by a key release.
+### Keyboard examples
 
-For example, this sequence:
+Press `a`:
 
 ```
-04 00  04 02  1E 08
+00 04 00 00 00
 ```
 
-Corresponds to the keypress sequence [`a`, `A`, `⌘+1`]
+Release `a` (release flag set, payload ignored):
 
-Step-by-step:
+```
+80 00 00 00 00
+```
 
-1. `04 00` → HID keycode `0x04` corresponding to letter `a`, no modifier (produces `a`).
-2. `04 02` → HID keycode `0x04` corresponding to letter `a`, with Left Shift `0x02` (produces `A`).
-3. `1E 08` → HID keycode `0x1E` corresponding to `1`, with Left GUI/Command `0x08` (produces `⌘+1`).
+Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
 
+- `0x01` Left Ctrl (⌃)
+- `0x02` Left Shift (⇧)
+- `0x04` Left Alt / Option (⌥)
+- `0x08` Left GUI / Command (⌘)
+- `0x10` Right Ctrl (⌃)
+- `0x20` Right Shift (⇧)
+- `0x40` Right Alt / Option (⌥)
+- `0x80` Right GUI / Command (⌘)
+
+Example `A` (press then release):
+
+```
+00 04 00 02 00  80 00 00 00 00
+```
+
+Example `Fn+K` (press then release, Apple Fn flag set):
+
+```
+00 0E 00 00 01  80 00 00 00 00
+```
+
+Example `Fn` only (press then release, no keycode):
+
+```
+00 00 00 00 01  80 00 00 00 00
+```
+
+Consumer volume increment (usage `0x00E9`):
+
+```
+01 E9 00 00 00
+```
 
 UART TX is reserved for **logs only**. The device never sends protocol bytes back,
 so the host can safely read TX output as plain text logs.
@@ -147,34 +194,90 @@ Flags:
 
 - `-host` (default: `localhost`)
 - `-port` (default: `8080`)
-- `-send-timeout` (default: `2`) seconds to wait when queueing a keypress
+- `-send-timeout` (default: `2`) seconds to wait when queueing an event
 - `-vid` (default: `0x0403`) USB VID for the serial adapter
 - `-pid` (default: `0x6001`) USB PID for the serial adapter
 
 ## HTTP API
 
-`POST /keypress` with a low-level HID keycode + modifier flags.
+`POST /pressandrelease` sends a single event (press + release). If `type` is
+omitted, it defaults to `keyboard`.
 
-For instance, to send letter `A` (`a` (HID code 4) + `Shift`) :
+Request body:
 
 ```
-curl -X POST "http://localhost:8080/keypress" \
+{
+  "type": <string> ("keyboard"|"consumer"|"vendor"),
+  "code": <uint16>,
+  "modifiers": {
+    "left_ctrl": <bool>,
+    "left_shift": <bool>,
+    "left_alt": <bool>,
+    "left_gui": <bool>,
+    "right_ctrl": <bool>,
+    "right_shift": <bool>,
+    "right_alt": <bool>,
+    "right_gui": <bool>,
+    "apple_fn": <bool>
+  }
+}
+```
+
+- `type`:
+  - `"keyboard"`: standard key presses (letters, numbers, modifiers, function keys).
+  - `"consumer"`: media/system controls (volume, play/pause, keyboard layout toggle).
+  - `"vendor"`: device-specific usages (depends on host support).
+- `code` is a USB HID Usage ID for `keyboard`, or a 16-bit usage for `consumer`/`vendor`.
+  For `keyboard`, `code: 0` means “modifier-only” (no key pressed).
+- Keyboard modifiers (optional, macOS symbols/Apple names):
+  - `left_ctrl` (⌃), `left_shift` (⇧), `left_alt`/Option (⌥), `left_gui`/Command (⌘)
+  - `right_ctrl` (⌃), `right_shift` (⇧), `right_alt`/Option (⌥), `right_gui`/Command (⌘)
+  - `apple_fn` sets the Apple Fn bit in the keyboard report
+
+### Examples
+
+Send letter `A` (`a` (HID code 4) + `Shift`):
+
+```
+curl -X POST "http://localhost:8080/pressandrelease" \
   -H "Content-Type: application/json" \
-  -d '{"hid_code":4,"left_shift":true}'
+  -d '{"type":"keyboard","code":4,"modifiers":{"left_shift":true}}'
 ```
 
-Response:
+Hide/show iPad keyboard (AL Keyboard Layout / consumer usage 0x01AE):
 
 ```
-{"status":"ok"}
+curl -X POST "http://localhost:8080/pressandrelease" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"consumer","code":430}'
 ```
 
-Notes:
+Play/Pause (consumer usage 0x00CD):
 
-- `hid_code` is a USB HID Usage ID (Keyboard/Keypad page).
-- HID modifier flags are optional boolean fields on the request:
-  - `left_ctrl`, `left_shift`, `left_alt`, `left_gui`
-  - `right_ctrl`, `right_shift`, `right_alt`, `right_gui`
+```
+curl -X POST "http://localhost:8080/pressandrelease" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"consumer","code":205}'
+```
+
+Vendor usage example (0x0001):
+
+```
+curl -X POST "http://localhost:8080/pressandrelease" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"vendor","code":1}'
+```
+
+Send only Apple Fn (modifier-only, no key):
+
+```
+curl -X POST "http://localhost:8080/pressandrelease" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"keyboard","code":0,"modifiers":{"apple_fn":true}}'
+```
+
+In the future, if there's demand, a WebSocket interface with raw serial access and
+device log streaming may be added.
 
 ## Client library
 
@@ -184,7 +287,13 @@ There is a small Go client in `client/` for calling the HTTP API.
 client := usbbridge.New(usbbridge.Config{
 	Host: "localhost:8080",
 })
-err := client.SendKeypress(ctx, usbbridge.KeypressRequest{HIDCode: 0x04, LeftShift: true}) // A with Shift
+err := client.SendPressAndRelease(ctx, usbbridge.PressAndReleaseRequest{
+	Type: "keyboard",
+	Code: 0x04,
+	Modifiers: &usbbridge.PressAndReleaseModifiers{
+		LeftShift: true,
+	},
+}) // A with Shift
 ```
 
 ## UART configuration

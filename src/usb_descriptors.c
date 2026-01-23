@@ -7,8 +7,12 @@
 #include "class/hid/hid_device.h"
 #include "tusb.h"
 
-#define USB_VID   0xCafe
-#define USB_PID   0x0001
+#include "hid_reports.h"
+
+#define USB_VID   0x05AC // Apple Inc.
+#define USB_PID   0x0267 // Apple Magic Keyboard (ANSI)
+// Note: Apple-specific vendor reports and Fn/Globe key behaviors are often gated on
+// VID/PID matching an Apple keyboard, so we identify as a Magic Keyboard.
 #define USB_BCD   0x0200
 
 //--------------------------------------------------------------------+
@@ -36,6 +40,7 @@ tusb_desc_device_t const desc_device = {
   .bNumConfigurations = 0x01
 };
 
+// TinyUSB looks up these descriptor callbacks by symbol name at link time.
 uint8_t const * tud_descriptor_device_cb(void) {
   return (uint8_t const *) &desc_device;
 }
@@ -45,16 +50,66 @@ uint8_t const * tud_descriptor_device_cb(void) {
 //--------------------------------------------------------------------+
 
 enum {
-  ITF_NUM_HID = 0,
+  ITF_NUM_HID_KEYBOARD = 0,
+  ITF_NUM_HID_AUX,
   ITF_NUM_TOTAL
 };
 
-#define EPNUM_HID   0x81
+#define EPNUM_HID_KEYBOARD   0x81
+#define EPNUM_HID_AUX        0x82
 
-#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN)
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + 2 * TUD_HID_DESC_LEN)
 
-static uint8_t const desc_hid_report[] = {
-  TUD_HID_REPORT_DESC_KEYBOARD()
+static uint8_t const desc_hid_report_keyboard[] = {
+  // Keyboard report with Apple Fn in the reserved byte.
+  // Reference: https://gist.github.com/fauxpark/010dcf5d6377c3a71ac98ce37414c6c4
+  0x05, 0x01,                     // Usage Page (Generic Desktop)
+  0x09, 0x06,                     // Usage (Keyboard)
+  0xA1, 0x01,                     // Collection (Application)
+  0x05, 0x07,                     // Usage Page (Key Codes)
+  0x19, 0xE0,                     // Usage Minimum (224)
+  0x29, 0xE7,                     // Usage Maximum (231)
+  0x15, 0x00,                     // Logical Minimum (0)
+  0x25, 0x01,                     // Logical Maximum (1)
+  0x75, 0x01,                     // Report Size (1)
+  0x95, 0x08,                     // Report Count (8)
+  0x81, 0x02,                     // Input (Data, Var, Abs) Modifier byte
+
+  0x05, 0xFF,                     // Usage Page (AppleVendor Top Case)
+  0x09, 0x03,                     // Usage (KeyboardFn)
+  0x15, 0x00,                     // Logical Minimum (0)
+  0x25, 0x01,                     // Logical Maximum (1)
+  0x75, 0x08,                     // Report Size (8)
+  0x95, 0x01,                     // Report Count (1)
+  0x81, 0x02,                     // Input (Data, Var, Abs) Apple Fn byte
+
+  0x95, 0x06,                     // Report Count (6)
+  0x75, 0x08,                     // Report Size (8)
+  0x15, 0x00,                     // Logical Minimum (0)
+  0x25, 0x65,                     // Logical Maximum (101)
+  0x05, 0x07,                     // Usage Page (Key Codes)
+  0x19, 0x00,                     // Usage Minimum (0)
+  0x29, 0x65,                     // Usage Maximum (101)
+  0x81, 0x00,                     // Input (Data, Array) Key array
+  0xC0                            // End Collection
+};
+
+static uint8_t const desc_hid_report_aux[] = {
+  TUD_HID_REPORT_DESC_CONSUMER( HID_REPORT_ID(PUSBKB_REPORT_ID_CONSUMER) ),
+
+  // Vendor-defined report for custom usages.
+  // Report payload is 2 bytes and interpreted by the host.
+  0x06, 0x00, 0xFF,       // Usage Page (Vendor 0xFF00)
+  0x09, 0x01,             // Usage (0x01)
+  0xA1, 0x01,             // Collection (Application)
+  0x85, PUSBKB_REPORT_ID_VENDOR, // Report ID
+  0x15, 0x00,             // Logical Minimum (0)
+  0x26, 0xFF, 0x00,       // Logical Maximum (255)
+  0x75, 0x08,             // Report Size (8)
+  0x95, 0x02,             // Report Count (2)
+  0x09, 0x01,             // Usage (0x01)
+  0x81, 0x02,             // Input (Data, Var, Abs)
+  0xC0                    // End Collection
 };
 
 uint8_t const desc_fs_configuration[] = {
@@ -63,8 +118,14 @@ uint8_t const desc_fs_configuration[] = {
                         TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
 
   // Interface number, string index, protocol, report descriptor len, EP addr, size, interval
-  TUD_HID_DESCRIPTOR(ITF_NUM_HID, 4, HID_ITF_PROTOCOL_KEYBOARD,
-                     sizeof(desc_hid_report), EPNUM_HID, CFG_TUD_HID_EP_BUFSIZE, 10),
+  TUD_HID_DESCRIPTOR(ITF_NUM_HID_KEYBOARD, 4, HID_ITF_PROTOCOL_KEYBOARD,
+                     sizeof(desc_hid_report_keyboard), EPNUM_HID_KEYBOARD,
+                     CFG_TUD_HID_EP_BUFSIZE, 10),
+
+  // Aux HID interface (consumer/vendor reports).
+  TUD_HID_DESCRIPTOR(ITF_NUM_HID_AUX, 5, HID_ITF_PROTOCOL_NONE,
+                     sizeof(desc_hid_report_aux), EPNUM_HID_AUX,
+                     CFG_TUD_HID_EP_BUFSIZE, 10),
 };
 
 uint8_t const * tud_descriptor_configuration_cb(uint8_t index) {
@@ -73,8 +134,10 @@ uint8_t const * tud_descriptor_configuration_cb(uint8_t index) {
 }
 
 uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance) {
-  (void)instance;
-  return desc_hid_report;
+  if (instance == PUSBKB_HID_ITF_KEYBOARD) {
+    return desc_hid_report_keyboard;
+  }
+  return desc_hid_report_aux;
 }
 
 //--------------------------------------------------------------------+
@@ -83,10 +146,11 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance) {
 
 char const* string_desc_arr [] = {
   (const char[]) { 0x09, 0x04 }, // 0: supported language is English (0x0409)
-  "PicoUSBKeyBridge",            // 1: Manufacturer
-  "PicoUSBKeyBridge HID",        // 2: Product
+  "Apple Inc.",                  // 1: Manufacturer
+  "Apple Keyboard",              // 2: Product
   "000000000001",                // 3: Serials (placeholder)
-  "PicoUSBKeyBridge HID",        // 4: HID Interface
+  "Apple Keyboard",              // 4: HID Interface (keyboard)
+  "Apple Keyboard Aux",          // 5: HID Interface (consumer/vendor)
 };
 
 static uint16_t _desc_str[32];

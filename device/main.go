@@ -20,9 +20,16 @@ const (
 	defaultVID         = 0x0403
 	defaultPID         = 0x6001
 	defaultBaudRate    = 115200
-	usbbridgePacketLen = 2
+	usbbridgePacketLen = 5
 	defaultWriteQueue  = 1
 	maxLogLineBytes    = 16384
+)
+
+const (
+	usbbridgeTypeKeyboard = 0x00
+	usbbridgeTypeConsumer = 0x01
+	usbbridgeTypeVendor   = 0x02
+	usbbridgeReleaseFlag  = 0x80
 )
 
 var errDeviceNotFound = errors.New("usbbridge device not found")
@@ -72,14 +79,52 @@ func NewManager(config Config) *Manager {
 	return manager
 }
 
-func (m *Manager) Send(ctx context.Context, keyCode byte, modifier byte) error {
+func (m *Manager) SendKeyboard(ctx context.Context, keyCode uint16, modifier byte, flags byte, release bool) error {
 	if m.currentPort() == nil {
 		return fmt.Errorf("usbbridge not connected")
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	packet := [usbbridgePacketLen]byte{keyCode, modifier}
+	typeByte := byte(usbbridgeTypeKeyboard)
+	if release {
+		typeByte |= usbbridgeReleaseFlag
+	}
+	packet := buildPacket(typeByte, keyCode, modifier, flags)
+	return m.enqueuePacket(ctx, packet)
+}
+
+func (m *Manager) SendConsumer(ctx context.Context, usage uint16, release bool) error {
+	if m.currentPort() == nil {
+		return fmt.Errorf("usbbridge not connected")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	typeByte := byte(usbbridgeTypeConsumer)
+	if release {
+		typeByte |= usbbridgeReleaseFlag
+	}
+	packet := buildPacket(typeByte, usage, 0, 0)
+	return m.enqueuePacket(ctx, packet)
+}
+
+func (m *Manager) SendVendor(ctx context.Context, usage uint16, release bool) error {
+	if m.currentPort() == nil {
+		return fmt.Errorf("usbbridge not connected")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	typeByte := byte(usbbridgeTypeVendor)
+	if release {
+		typeByte |= usbbridgeReleaseFlag
+	}
+	packet := buildPacket(typeByte, usage, 0, 0)
+	return m.enqueuePacket(ctx, packet)
+}
+
+func (m *Manager) enqueuePacket(ctx context.Context, packet [usbbridgePacketLen]byte) error {
 	select {
 	case m.writeCh <- packet:
 		return nil
@@ -87,6 +132,16 @@ func (m *Manager) Send(ctx context.Context, keyCode byte, modifier byte) error {
 		return fmt.Errorf("usbbridge closed")
 	case <-ctx.Done():
 		return fmt.Errorf("usbbridge send canceled: %w", ctx.Err())
+	}
+}
+
+func buildPacket(typeByte byte, code uint16, modifier byte, flags byte) [usbbridgePacketLen]byte {
+	return [usbbridgePacketLen]byte{
+		typeByte,
+		byte(code & 0xFF),
+		byte((code >> 8) & 0xFF),
+		modifier,
+		flags,
 	}
 }
 
