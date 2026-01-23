@@ -173,6 +173,8 @@ The Go HTTP daemon keeps a persistent UART connection to the device and exposes
 an HTTP API for sending key events. The daemon and client library live in the
 `keybridged` repo, which also hosts the HTTP API docs and examples:
 https://github.com/2opremio/keybridged
+Note: keybridged defaults target the Nordic CDC VID/PID; for the FT232 adapter
+used with the example hardware, pass `-vid 0x0403 -pid 0x6001`.
 
 ## Bluetooth variant
 
