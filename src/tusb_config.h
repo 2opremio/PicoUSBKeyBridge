@@ -15,11 +15,12 @@
 #define CFG_TUSB_OS               OPT_OS_PICO
 #define CFG_TUD_ENABLED           1
 #define CFG_TUH_ENABLED           0
-#ifndef CFG_TUSB_DEBUG
-#define CFG_TUSB_DEBUG            3  // 0=off, 1=errors, 2=warnings, 3=info
+#ifdef CFG_TUSB_DEBUG
+#undef CFG_TUSB_DEBUG
 #endif
+#define CFG_TUSB_DEBUG            1  // 0=off, 1=errors, 2=warnings, 3=info, 4=debug
 
-// Route TinyUSB debug logs to CDC TX.
+// Route TinyUSB debug logs to UART TX.
 #define CFG_TUSB_DEBUG_PRINTF log_tusb_debug_printf
 
 #ifndef CFG_TUSB_MEM_SECTION
@@ -39,17 +40,10 @@
 #endif
 
 //------------- CLASS -------------//
-#define CFG_TUD_CDC              1
-#define CFG_TUD_HID              0
+#define CFG_TUD_CDC              0
+#define CFG_TUD_HID              1
 
-// CDC FIFO size of TX and RX
-#define CFG_TUD_CDC_RX_BUFSIZE   256
-#define CFG_TUD_CDC_TX_BUFSIZE   256
-
-// CDC Endpoint transfer buffer size
-#define CFG_TUD_CDC_EP_BUFSIZE   64
-
-// Used by PIO USB HID descriptor sizing.
+// Used by HID descriptor sizing.
 #define CFG_TUD_HID_EP_BUFSIZE   64
 
 #ifdef __cplusplus

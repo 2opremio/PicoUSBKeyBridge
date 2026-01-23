@@ -4,8 +4,8 @@ Print a RAM/flash summary and top RAM symbols from the linker map.
 
 Usage:
   ./memory_report.py
-  ./memory_report.py --elf cmake-build-debug/PicoUSBKeyBridge.elf
-  ./memory_report.py --map cmake-build-debug/PicoUSBKeyBridge.elf.map --top 15
+  ./memory_report.py --elf build/PicoUSBKeyBridge.elf
+  ./memory_report.py --map build/PicoUSBKeyBridge.elf.map --top 15
 """
 
 from __future__ import annotations
@@ -168,7 +168,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Summarize RP2350 memory usage.")
     parser.add_argument(
         "--elf",
-        default="cmake-build-debug/PicoUSBKeyBridge.elf",
+        default="build/PicoUSBKeyBridge.elf",
         help="Path to the ELF file.",
     )
     parser.add_argument(

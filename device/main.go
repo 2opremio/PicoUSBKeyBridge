@@ -17,8 +17,8 @@ import (
 )
 
 const (
-	defaultVID         = 0xCafe
-	defaultPID         = 0x4001
+	defaultVID         = 0x0403
+	defaultPID         = 0x6001
 	defaultBaudRate    = 115200
 	usbbridgePacketLen = 2
 	defaultWriteQueue  = 1
@@ -35,12 +35,16 @@ type Manager struct {
 	stopCh   chan struct{}
 	wg       sync.WaitGroup
 	logger   *slog.Logger
+	vid      uint16
+	pid      uint16
 
 	writeCh chan [usbbridgePacketLen]byte
 }
 
 type Config struct {
 	Logger *slog.Logger
+	VID    uint16
+	PID    uint16
 }
 
 func NewManager(config Config) *Manager {
@@ -54,6 +58,14 @@ func NewManager(config Config) *Manager {
 		manager.logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	}
 	manager.logger = manager.logger.With("component", "usbbridge")
+	manager.vid = config.VID
+	manager.pid = config.PID
+	if manager.vid == 0 {
+		manager.vid = defaultVID
+	}
+	if manager.pid == 0 {
+		manager.pid = defaultPID
+	}
 	manager.wg.Go(manager.reconnectLoop)
 	manager.wg.Go(manager.deviceLogReadLoop)
 	manager.wg.Go(manager.writeWorker)
@@ -175,7 +187,7 @@ func (m *Manager) handleConnectError(err error, lastErr string, loggedNotFound b
 	errMsg := err.Error()
 	if errors.Is(err, errDeviceNotFound) {
 		if !loggedNotFound {
-			m.logger.Warn("device not found", "vid", fmt.Sprintf("0x%04X", defaultVID), "pid", fmt.Sprintf("0x%04X", defaultPID))
+			m.logger.Warn("device not found", "vid", fmt.Sprintf("0x%04X", m.vid), "pid", fmt.Sprintf("0x%04X", m.pid))
 			loggedNotFound = true
 		}
 	} else if errMsg != lastErr {
@@ -286,7 +298,13 @@ func (m *Manager) flushLogLine(state *logLineState) {
 }
 
 func (m *Manager) logDeviceLine(line []byte) {
+	if len(line) == 0 {
+		return
+	}
 	text := strings.TrimRight(string(line), "\r")
+	if text == "" {
+		return
+	}
 	m.logger.Info("usbbridge device", "line", text)
 }
 
@@ -304,8 +322,8 @@ func (m *Manager) findPort() (string, error) {
 		return "", fmt.Errorf("enumerate serial ports: %w", err)
 	}
 
-	expectedVID := fmt.Sprintf("%04X", defaultVID)
-	expectedPID := fmt.Sprintf("%04X", defaultPID)
+	expectedVID := fmt.Sprintf("%04X", m.vid)
+	expectedPID := fmt.Sprintf("%04X", m.pid)
 	for _, port := range ports {
 		if port == nil || !port.IsUSB {
 			continue
@@ -316,7 +334,7 @@ func (m *Manager) findPort() (string, error) {
 		return port.Name, nil
 	}
 
-	return "", fmt.Errorf("%w (vid=0x%04X pid=0x%04X)", errDeviceNotFound, defaultVID, defaultPID)
+	return "", fmt.Errorf("%w (vid=0x%04X pid=0x%04X)", errDeviceNotFound, m.vid, m.pid)
 }
 
 func (m *Manager) writePacket(port serial.Port, packet []byte) error {
@@ -353,9 +371,6 @@ func (m *Manager) connect() error {
 	if err != nil {
 		return err
 	}
-	if err := port.SetDTR(true); err != nil {
-		m.logger.Warn("set DTR failed", "error", err)
-	}
 	m.setPort(port, portName)
 	m.logger.Info("connected", "port", portName)
 	return nil
@@ -371,21 +386,10 @@ func (m *Manager) openPortWithRetry(portName string) (serial.Port, error) {
 			return port, nil
 		}
 		lastErr = err
-		if !isSerialPortBusy(err) || attempt == maxAttempts {
-			return nil, fmt.Errorf("open usbbridge port %q: %w", portName, err)
-		}
 		time.Sleep(delay)
 		delay += 150 * time.Millisecond
 	}
-	return nil, fmt.Errorf("open usbbridge port %q busy after %d attempts: %w", portName, maxAttempts, lastErr)
-}
-
-func isSerialPortBusy(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "busy") || strings.Contains(msg, "resource busy")
+	return nil, fmt.Errorf("open usbbridge port %q after %d attempts: %w", portName, maxAttempts, lastErr)
 }
 
 func (m *Manager) setPort(port serial.Port, name string) {

@@ -29,8 +29,22 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
-set(PICO_PIO_USB_PATH ${CMAKE_CURRENT_LIST_DIR}/third_party/pico-pio-usb)
-add_subdirectory(${PICO_PIO_USB_PATH} pico_pio_usb)
+set(PUSBKB_UART_INDEX "1" CACHE STRING "UART instance index (0 or 1)")
+set(PUSBKB_UART_BAUDRATE "115200" CACHE STRING "UART baud rate")
+set(PUSBKB_UART_TX_PIN "4" CACHE STRING "UART TX GPIO pin")
+set(PUSBKB_UART_RX_PIN "5" CACHE STRING "UART RX GPIO pin")
+option(PUSBKB_HID_TEST "Enable USB-C HID test mode" OFF)
+
+execute_process(
+  COMMAND git rev-parse --short HEAD
+  WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
+  RESULT_VARIABLE PUSBKB_GIT_RESULT
+  OUTPUT_VARIABLE PUSBKB_GIT_COMMIT
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (NOT PUSBKB_GIT_RESULT EQUAL 0)
+  set(PUSBKB_GIT_COMMIT "unknown")
+endif ()
 
 add_executable(PicoUSBKeyBridge
   src/log.c
@@ -41,14 +55,19 @@ add_executable(PicoUSBKeyBridge
 target_include_directories(PicoUSBKeyBridge PRIVATE src)
 target_link_libraries(PicoUSBKeyBridge PRIVATE
   pico_stdlib
-  pico_multicore
-  hardware_pio
-  hardware_dma
   hardware_watchdog
   tinyusb_device
-  pico_pio_usb
 )
 
-pico_enable_stdio_uart(PicoUSBKeyBridge 0)
+target_compile_definitions(PicoUSBKeyBridge PRIVATE
+  PUSBKB_GIT_COMMIT=\"${PUSBKB_GIT_COMMIT}\"
+  PUSBKB_UART_INDEX=${PUSBKB_UART_INDEX}
+  PUSBKB_UART_BAUDRATE=${PUSBKB_UART_BAUDRATE}
+  PUSBKB_UART_TX_PIN=${PUSBKB_UART_TX_PIN}
+  PUSBKB_UART_RX_PIN=${PUSBKB_UART_RX_PIN}
+  $<$<BOOL:${PUSBKB_HID_TEST}>:PUSBKB_HID_TEST=1>
+)
+
+pico_enable_stdio_uart(PicoUSBKeyBridge 1)
 pico_enable_stdio_usb(PicoUSBKeyBridge 0)
 pico_add_extra_outputs(PicoUSBKeyBridge)

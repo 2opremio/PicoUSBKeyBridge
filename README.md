@@ -1,13 +1,38 @@
 # PicoUSBKeyBridge
 
-`PicoUSBKeyBridge` turns the [Waveshare RP2350-USB-A](https://www.waveshare.com/rp2350-usb-a.htm) into a
-wired keyboard emulator. You can send keypresses programmatically over USB-C, while
-the USB-A port behaves like a standard keyboard connected to a target host.
+`PicoUSBKeyBridge` is a bridge firmware for Raspberry Pi Pico-class boards. It
+accepts keypress packets over UART and exposes a USB HID keyboard to a target
+host over the board’s USB port.
 
-**WARNING:** Read the wiring checklist carefully before connecting anything. A
-non-standard, special USB-A to USB-A cable is required and must be built.
+It lets you programmatically send keypress events to a host that supports USB
+HID keyboards.
 
-![Port orientation on the RP2350-USB-A](img/waveshare-rp2350-usb-a-annotated.png)
+Use cases:
+- Automate kiosk or demo devices that only accept USB keyboards.
+- Drive hardware test rigs that need deterministic input events.
+- Programmatically emulate keyboard keypresses from software workflows.
+- Remotely send keypresses to a closed device that doesn't allow remote control (e.g., iPhone, iPad).
+
+## What you need
+
+- A Raspberry Pi Pico-class board (RP2040/RP2350).
+- A USB-to-UART serial adapter (3.3V logic).
+- This firmware.
+
+## Example hardware
+
+I am using the [Waveshare RP2350-USB-A](https://www.waveshare.com/rp2350-usb-a.htm)
+with an [FT232 adapter](https://www.az-delivery.de/en/products/ftdi-adapter-ft232rl).
+The default wiring below matches that board’s header and the adapter’s labeled pins.
+
+![My setup (annotated)](img/mysetup-annotated.jpeg)
+
+Note: the Waveshare RP2350-USB-A USB-A port on that board is **unused** in this firmware; the USB-C port
+is the HID device port. I originally picked the Waveshare RP2350-USB-A because I
+wanted to use the [Pico-PIO-USB](https://github.com/sekigon-gonnoc/Pico-PIO-USB)
+stack. PIO USB failed to enumerate reliably on macOS/iPadOS in my setup (see
+[issue #196](https://github.com/sekigon-gonnoc/Pico-PIO-USB/issues/196)), so I
+moved to TinyUSB over USB-C for HID and used the UART adapter for control/logging.
 
 ## Build
 
@@ -41,21 +66,20 @@ UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
 
 ## Wiring checklist
 
-- Use a **non-standard USB-A to USB-A** cable with **no VBUS connection** (cut VBUS in the cable).
-- A USB-A male breakout like this can be used to build the cable:
-  https://www.amazon.es/PNGKNYOCN-adaptador-hembra-unidades-Dupont/dp/B09YCC526T
+- Connect the board’s **USB port** to the **target host** (enumerates as a HID keyboard).
+- Connect a USB-to-UART adapter to the board UART pins.
+- Make sure the adapter is set to **3.3V logic**.
 
-![USB-A to USB-A cable wiring (VBUS cut)](img/usb-a-to-a-cable-diagram.png)
+Default UART wiring (configurable):
 
-**VBUS warning (important):** The USB-A side must not provide VBUS to avoid electrical
-damage. We are using a USB-A female connector on a peripheral, which is normally
-**host-side** by USB spec. VBUS must only be provided from the USB-C port to avoid
-back-powering. If VBUS is provided on both the USB-C and USB-A ports, **your devices
-may be damaged**.
+- Adapter **RX** → `GPIO4` (UART TX)
+- Adapter **TX** → `GPIO5` (UART RX)
+- Adapter **GND** → any **GND** on the board
+See `UART configuration` below to change the pin mapping.
 
 ## Serial protocol
 
-The CDC interface expects a fixed 2-byte packet:
+The UART interface expects a fixed 2-byte packet at 115200 baud:
 
 - **Byte 0**: USB HID keycode
 - **Byte 1**: modifier bitmap
@@ -93,16 +117,13 @@ Step-by-step:
 3. `1E 08` → HID keycode `0x1E` corresponding to `1`, with Left GUI/Command `0x08` (produces `⌘+1`).
 
 
-CDC TX is reserved for **logs only**. The device never sends protocol bytes back,
+UART TX is reserved for **logs only**. The device never sends protocol bytes back,
 so the host can safely read TX output as plain text logs.
-
-Logs are buffered and only flushed once the CDC port is opened **and DTR is
-asserted**. If you want logs, open the port and send DTR.
 
 ## USB bridge daemon
 
 This repo also ships a small HTTP daemon that keeps a persistent connection to
-the PicoUSBKeyBridge CDC device, retries forever, and logs device output to
+the PicoUSBKeyBridge UART adapter, retries forever, and logs device output to
 stdout.
 
 Build/run:
@@ -127,6 +148,8 @@ Flags:
 - `-host` (default: `localhost`)
 - `-port` (default: `8080`)
 - `-send-timeout` (default: `2`) seconds to wait when queueing a keypress
+- `-vid` (default: `0x0403`) USB VID for the serial adapter
+- `-pid` (default: `0x6001`) USB PID for the serial adapter
 
 ## HTTP API
 
@@ -162,4 +185,16 @@ client := usbbridge.New(usbbridge.Config{
 	Host: "localhost:8080",
 })
 err := client.SendKeypress(ctx, usbbridge.KeypressRequest{HIDCode: 0x04, LeftShift: true}) // A with Shift
+```
+
+## UART configuration
+
+Override UART pins/baud rate at build time:
+
+```
+cmake -S . -B build \
+  -DPUSBKB_UART_INDEX=1 \
+  -DPUSBKB_UART_TX_PIN=4 \
+  -DPUSBKB_UART_RX_PIN=5 \
+  -DPUSBKB_UART_BAUDRATE=115200
 ```

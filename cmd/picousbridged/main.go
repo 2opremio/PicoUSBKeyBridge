@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,20 +25,37 @@ const (
 	defaultHost         = "localhost"
 	defaultPort         = 8080
 	defaultSendTimeoutS = 2
+	defaultVID          = "0x0403"
+	defaultPID          = "0x6001"
 )
 
 func main() {
 	host := flag.String("host", defaultHost, "Host to bind the HTTP server to")
 	port := flag.Int("port", defaultPort, "Port to bind the HTTP server to")
 	sendTimeoutSeconds := flag.Int("send-timeout", defaultSendTimeoutS, "Seconds to wait when queueing a keypress")
+	vidFlag := flag.String("vid", defaultVID, "USB VID of the serial adapter (hex)")
+	pidFlag := flag.String("pid", defaultPID, "USB PID of the serial adapter (hex)")
 	flag.Parse()
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{}))
 	slog.SetDefault(logger)
 
-	manager := device.NewManager(device.Config{
-		Logger: logger,
-	})
+  vid, err := parseUSBID(*vidFlag)
+  if err != nil {
+    logger.Error("invalid VID", "value", *vidFlag, "error", err)
+    os.Exit(1)
+  }
+  pid, err := parseUSBID(*pidFlag)
+  if err != nil {
+    logger.Error("invalid PID", "value", *pidFlag, "error", err)
+    os.Exit(1)
+  }
+
+  manager := device.NewManager(device.Config{
+    Logger: logger,
+    VID:    vid,
+    PID:    pid,
+  })
 	defer manager.Close()
 
 	addr := net.JoinHostPort(*host, strconv.Itoa(*port))
@@ -70,6 +88,14 @@ func main() {
 			os.Exit(1)
 		}
 	}
+}
+
+func parseUSBID(value string) (uint16, error) {
+  parsed, err := strconv.ParseUint(strings.TrimSpace(value), 0, 16)
+  if err != nil {
+    return 0, err
+  }
+  return uint16(parsed), nil
 }
 
 type keypressResponse struct {
