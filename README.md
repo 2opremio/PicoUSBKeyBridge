@@ -174,6 +174,11 @@ an HTTP API for sending key events. The daemon and client library live in the
 `keybridged` repo, which also hosts the HTTP API docs and examples:
 https://github.com/2opremio/keybridged
 
+## Bluetooth variant
+
+For a BLE HID version of this bridge (USB CDC -> BLE keyboard), see:
+https://github.com/2opremio/NordicBTKeyBridge
+
 ## UART configuration
 
 Override UART pins/baud rate at build time:
