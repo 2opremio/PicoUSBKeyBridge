@@ -9,10 +9,8 @@
 
 #include "hid_reports.h"
 
-#define USB_VID   0x05AC // Apple Inc.
-#define USB_PID   0x0267 // Apple Magic Keyboard (ANSI)
-// Note: Apple-specific vendor reports and Fn/Globe key behaviors are often gated on
-// VID/PID matching an Apple keyboard, so we identify as a Magic Keyboard.
+#define USB_VID   0x1915 // Nordic Semiconductor
+#define USB_PID   0xEEEF // Nordic HID keyboard sample PID
 #define USB_BCD   0x0200
 
 //--------------------------------------------------------------------+
@@ -146,11 +144,11 @@ uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance) {
 
 char const* string_desc_arr [] = {
   (const char[]) { 0x09, 0x04 }, // 0: supported language is English (0x0409)
-  "Apple Inc.",                  // 1: Manufacturer
-  "Apple Keyboard",              // 2: Product
+  "Nordic Semiconductor",        // 1: Manufacturer
+  "Nordic HID Keyboard",         // 2: Product
   "000000000001",                // 3: Serials (placeholder)
-  "Apple Keyboard",              // 4: HID Interface (keyboard)
-  "Apple Keyboard Aux",          // 5: HID Interface (consumer/vendor)
+  "Nordic HID Keyboard",         // 4: HID Interface (keyboard)
+  "Nordic HID Keyboard Aux",     // 5: HID Interface (consumer/vendor)
 };
 
 static uint16_t _desc_str[32];

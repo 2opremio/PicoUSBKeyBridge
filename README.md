@@ -41,9 +41,6 @@ moved to TinyUSB over USB-C for HID and used the UART adapter for control/loggin
    - Ninja
    - GNU Arm Embedded toolchain (`arm-none-eabi-gcc`)
 
-Note: the firmware presents itself as an Apple Magic Keyboard (VID/PID) so
-macOS/iPadOS will enable Apple-specific Fn/Globe behaviors.
-
 2. Initialize submodules:
 ```
 git submodule update --init --recursive
@@ -60,6 +57,11 @@ cmake --build build
 ```
 
 UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
+
+## VID/PID note
+
+The device uses Nordic's HID keyboard sample VID/PID values
+(VID `0x1915`, PID `0xEEEF`) to align with the official samples.
 
 ## Flash
 
