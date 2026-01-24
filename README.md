@@ -147,6 +147,17 @@ and in TinyUSB’s `hid.h` constants (which may be easier to browse):
 - HID Usage Tables (Keyboard/Keypad): https://usb.org/sites/default/files/hut1_4.pdf
 - TinyUSB keycode definitions: https://github.com/hathach/tinyusb/blob/6e891c6dc716d6ae91fdc54aaec2899f788e14fc/src/class/hid/hid.h#L389-L391
 
+Consumer payload codes are USB HID **Consumer Page (0x0C)** usages (16-bit). They are defined in the HID Usage Tables:
+- HID Usage Tables (Consumer Page): https://usb.org/sites/default/files/hut1_4.pdf
+- TinyUSB consumer usage definitions (`HID_USAGE_CONSUMER_*`): https://github.com/hathach/tinyusb/blob/6e891c6dc716d6ae91fdc54aaec2899f788e14fc/src/class/hid/hid.h#L898
+
+Common consumer usages (hex):
+- Play/Pause: `0x00CD`
+- Mute: `0x00E2`
+- Volume Increment: `0x00E9`
+- Volume Decrement: `0x00EA`
+- AL Keyboard Layout (e.g. iPad show/hide keyboard): `0x01AE`
+
 Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
 
 - `0x01` Left Ctrl (⌃)
