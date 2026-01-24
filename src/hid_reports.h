@@ -4,7 +4,6 @@
 // Report IDs must match the HID report descriptor.
 #define PUSBKB_REPORT_ID_KEYBOARD 0
 #define PUSBKB_REPORT_ID_CONSUMER 1
-#define PUSBKB_REPORT_ID_VENDOR   2
 
 // HID interface instances.
 #define PUSBKB_HID_ITF_KEYBOARD 0
@@ -14,7 +13,6 @@
 typedef enum {
   PUSBKB_PKT_TYPE_KEYBOARD = 0,
   PUSBKB_PKT_TYPE_CONSUMER = 1,
-  PUSBKB_PKT_TYPE_VENDOR = 2,
 } pusbkb_pkt_type_t;
 
 // Packet type byte: low bits encode type, MSB encodes release.

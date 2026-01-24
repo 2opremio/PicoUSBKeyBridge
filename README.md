@@ -89,7 +89,7 @@ The UART interface uses a fixed 5-byte packet format. UART is 115200 baud by def
 ### Packet format (5 bytes)
 
 - **Byte 0**: type byte
-  - low nibble indicates payload type: `0x00` keyboard, `0x01` consumer control, `0x02` vendor
+  - low nibble indicates payload type: `0x00` keyboard, `0x01` consumer control
   - bit 7 set: release event (not set, press event)
 - **Byte 1**: code low byte
 - **Byte 2**: code high byte
@@ -99,7 +99,7 @@ The UART interface uses a fixed 5-byte packet format. UART is 115200 baud by def
 
 Keyboard payload is `code + modifier + flags` (keycodes are 8-bit; high byte should be 0).
 
-Consumer/vendor payload uses the 16-bit code (little-endian); modifier/flags should be 0.
+Consumer payload uses the 16-bit code (little-endian); modifier/flags should be 0.
 
 The code in keyboard payloads uses USB HID keyboard keycodes. They are defined in the HID Usage Tables (Keyboard/Keypad page)
 and in TinyUSB’s `hid.h` constants (which may be easier to browse):

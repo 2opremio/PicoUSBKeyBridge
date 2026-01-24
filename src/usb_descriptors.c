@@ -94,20 +94,6 @@ static uint8_t const desc_hid_report_keyboard[] = {
 
 static uint8_t const desc_hid_report_aux[] = {
   TUD_HID_REPORT_DESC_CONSUMER( HID_REPORT_ID(PUSBKB_REPORT_ID_CONSUMER) ),
-
-  // Vendor-defined report for custom usages.
-  // Report payload is 2 bytes and interpreted by the host.
-  0x06, 0x00, 0xFF,       // Usage Page (Vendor 0xFF00)
-  0x09, 0x01,             // Usage (0x01)
-  0xA1, 0x01,             // Collection (Application)
-  0x85, PUSBKB_REPORT_ID_VENDOR, // Report ID
-  0x15, 0x00,             // Logical Minimum (0)
-  0x26, 0xFF, 0x00,       // Logical Maximum (255)
-  0x75, 0x08,             // Report Size (8)
-  0x95, 0x02,             // Report Count (2)
-  0x09, 0x01,             // Usage (0x01)
-  0x81, 0x02,             // Input (Data, Var, Abs)
-  0xC0                    // End Collection
 };
 
 uint8_t const desc_fs_configuration[] = {
@@ -120,7 +106,7 @@ uint8_t const desc_fs_configuration[] = {
                      sizeof(desc_hid_report_keyboard), EPNUM_HID_KEYBOARD,
                      CFG_TUD_HID_EP_BUFSIZE, 10),
 
-  // Aux HID interface (consumer/vendor reports).
+  // Aux HID interface (consumer reports).
   TUD_HID_DESCRIPTOR(ITF_NUM_HID_AUX, 5, HID_ITF_PROTOCOL_NONE,
                      sizeof(desc_hid_report_aux), EPNUM_HID_AUX,
                      CFG_TUD_HID_EP_BUFSIZE, 10),
@@ -148,7 +134,7 @@ char const* string_desc_arr [] = {
   "Nordic HID Keyboard",         // 2: Product
   "000000000001",                // 3: Serials (placeholder)
   "Nordic HID Keyboard",         // 4: HID Interface (keyboard)
-  "Nordic HID Keyboard Aux",     // 5: HID Interface (consumer/vendor)
+  "Nordic HID Keyboard Aux",     // 5: HID Interface (consumer)
 };
 
 static uint16_t _desc_str[32];

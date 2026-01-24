@@ -33,11 +33,11 @@
 //   [type] [code_lo] [code_hi] [modifier] [flags]
 //
 // type byte:
-//   - low nibble: 0 = keyboard, 1 = consumer, 2 = vendor
+//   - low nibble: 0 = keyboard, 1 = consumer
 //   - bit 7: set for release, clear for press
 //
 // Keyboard payload: 16-bit code + modifier byte
-// Consumer/vendor payload: 16-bit usage (little-endian)
+// Consumer payload: 16-bit usage (little-endian)
 // --------------------------------------------------------------------
 
 typedef struct {
@@ -243,22 +243,6 @@ static void hid_send_consumer_press_release(uint16_t usage, uint8_t *stage) {
   }
 }
 
-static void hid_send_vendor_press_release(uint16_t usage, uint8_t *stage) {
-  if (!tud_hid_n_ready(PUSBKB_HID_ITF_AUX)) {
-    return;
-  }
-  if (*stage == 1) {
-    tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_VENDOR,
-                     &usage, sizeof(usage));
-    *stage = 2;
-  } else if (*stage == 2) {
-    uint16_t zero = 0;
-    tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_VENDOR,
-                     &zero, sizeof(zero));
-    *stage = 0;
-  }
-}
-
 static void hid_queue_task(void) {
   static hid_key_t pending_key = {0};
   static uint8_t pending_stage = 0; // 0 = idle, 1 = send press, 2 = send release
@@ -270,8 +254,6 @@ static void hid_queue_task(void) {
       hid_send_press_release(&pending_key, &pending_stage);
     } else if (pending_type == PUSBKB_PKT_TYPE_CONSUMER) {
       hid_send_consumer_press_release(pending_usage, &pending_stage);
-    } else if (pending_type == PUSBKB_PKT_TYPE_VENDOR) {
-      hid_send_vendor_press_release(pending_usage, &pending_stage);
     } else {
       pending_stage = 0;
     }
@@ -302,18 +284,12 @@ static void hid_queue_task(void) {
       return;
     }
 
-    if (pending_type == PUSBKB_PKT_TYPE_CONSUMER ||
-        pending_type == PUSBKB_PKT_TYPE_VENDOR) {
+    if (pending_type == PUSBKB_PKT_TYPE_CONSUMER) {
       pending_usage = (uint16_t)(packed & 0xFFFF);
       if (is_release) {
         uint16_t zero = 0;
-        if (pending_type == PUSBKB_PKT_TYPE_CONSUMER) {
-          tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_CONSUMER,
-                           &zero, sizeof(zero));
-        } else {
-          tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_VENDOR,
-                           &zero, sizeof(zero));
-        }
+        tud_hid_n_report(PUSBKB_HID_ITF_AUX, PUSBKB_REPORT_ID_CONSUMER,
+                         &zero, sizeof(zero));
         return;
       }
       pending_stage = 1;
