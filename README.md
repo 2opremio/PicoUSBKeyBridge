@@ -1,17 +1,29 @@
 # PicoUSBKeyBridge
 
-PicoUSBKeyBridge turns a Raspberry Pi Pico into a wired keyboard emulator. It
-accepts key event packets over UART and exposes a USB HID keyboard to a target
-host.
+PicoUSBKeyBridge turns a Raspberry Pi Pico-class board (RP2040/RP2350) into a wired keyboard emulator.
+It accepts key event packets over UART and exposes a USB HID keyboard to a target host (iPad, macOS, etc).
 
-It lets you programmatically send key events to a host that supports USB HID keyboards.
+## Related projects
+
+- [keybridged](https://github.com/2opremio/keybridged): Go HTTP daemon + client library that sends key events to bridge firmware over UART/USB CDC.
+- [NordicBTKeyBridge](https://github.com/2opremio/NordicBTKeyBridge): Bluetooth Low Energy (BLE) HID version of this idea (USB CDC -> BLE keyboard).
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+  app[YourApp_or_Scripts] --> http[keybridged_HTTP_API]
+  http --> uart[UART_via_USB_to_UART]
+  uart --> fw[PicoUSBKeyBridge_Firmware]
+  fw --> hid[USB_HID_Keyboard]
+  hid --> host[TargetHost]
+```
 
 Use cases:
 - Automate kiosk or demo devices that only accept USB keyboards.
 - Drive hardware test rigs that need deterministic input events.
 - Programmatically emulate keyboard input from software workflows.
 - Remotely send key events to a device without OS-level remote control (e.g., iPhone, iPad).
-- I use it to send hotkeys to my iPad from when hitting drums in my eDrumkit :)
 
 ## What you need
 
@@ -58,11 +70,6 @@ cmake --build build
 
 UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
 
-## VID/PID note
-
-The device uses Nordic's HID keyboard sample VID/PID values
-(VID `0x1915`, PID `0xEEEF`) to align with the official samples.
-
 ## Flash
 
 1. Hold **BOOT** and connect the board over USB-C.
@@ -71,8 +78,8 @@ The device uses Nordic's HID keyboard sample VID/PID values
 
 ## Wiring checklist
 
-- Connect the board’s **USB port** to the **target host** (enumerates as a HID keyboard).
-- Connect a USB-to-UART adapter to the board UART pins.
+- Connect the board’s **USB-C port** to the **target host** (enumerates as a HID keyboard).
+- Connect a USB-to-UART adapter to the board UART pins (for control/logging).
 - Make sure the adapter is set to **3.3V logic**.
 
 Default UART wiring (configurable):
@@ -80,9 +87,43 @@ Default UART wiring (configurable):
 - Adapter **RX** → `GPIO4` (UART TX)
 - Adapter **TX** → `GPIO5` (UART RX)
 - Adapter **GND** → any **GND** on the board
+
 See `UART configuration` below to change the pin mapping.
 
-## Serial protocol
+## Device identity (serial vs keyboard)
+
+There are **two separate identities** involved in a typical setup:
+
+- **Serial side (what `keybridged` uses)**: the USB VID/PID of the device that provides the serial link from your computer to this firmware.
+  - In the example hardware, that’s the **FT232 USB-to-UART adapter**: VID `0x0403`, PID `0x6001`.
+  - If you use a different adapter, this VID/PID will be different.
+  - `keybridged` defaults are for Nordic USB CDC (VID `0x1915`, PID `0x520F`), so Pico setups usually need `-vid/-pid` overrides.
+- **Keyboard side (what the target host sees)**: the USB VID/PID of the Pico’s **USB HID keyboard** interface.
+  - This firmware currently enumerates as VID `0x1915`, PID `0xEEEF` (values borrowed from Nordic’s HID keyboard samples because they’re a reasonable, known pair).
+  - This is **unrelated** to how `keybridged` finds the serial device.
+
+## Backend daemon (keybridged)
+
+To actually *send* key events, you usually run the companion daemon on your computer:
+[keybridged](https://github.com/2opremio/keybridged).
+
+It keeps a persistent UART connection to the bridge and exposes a small HTTP API.
+
+Example (FT232 adapter):
+
+```
+go run ./cmd/keybridged -vid 0x0403 -pid 0x6001
+```
+
+Quick test (send `A` = HID code 4 + Shift):
+
+```
+curl -X POST "http://localhost:8080/pressandrelease" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"keyboard","code":4,"modifiers":{"left_shift":true}}'
+```
+
+## Serial protocol (single source of truth)
 
 The UART interface uses a fixed 5-byte packet format. UART is 115200 baud by default.
 
@@ -90,7 +131,7 @@ The UART interface uses a fixed 5-byte packet format. UART is 115200 baud by def
 
 - **Byte 0**: type byte
   - low nibble indicates payload type: `0x00` keyboard, `0x01` consumer control
-  - bit 7 set: release event (not set, press event)
+  - bit 7 set: release event (not set = press event)
 - **Byte 1**: code low byte
 - **Byte 2**: code high byte
 - **Byte 3**: modifier byte (keyboard only, else 0)
@@ -117,7 +158,7 @@ Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
 - `0x40` Right Alt / Option (⌥)
 - `0x80` Right GUI / Command (⌘)
 
-### Keyboard examples
+### Examples
 
 Press `a`:
 
@@ -125,22 +166,11 @@ Press `a`:
 00 04 00 00 00
 ```
 
-Release `a` (release flag set, payload ignored):
+Release `a` (release flag set; payload ignored):
 
 ```
 80 00 00 00 00
 ```
-
-Modifier bitmap matches the USB HID keyboard modifier bits (macOS symbols):
-
-- `0x01` Left Ctrl (⌃)
-- `0x02` Left Shift (⇧)
-- `0x04` Left Alt / Option (⌥)
-- `0x08` Left GUI / Command (⌘)
-- `0x10` Right Ctrl (⌃)
-- `0x20` Right Shift (⇧)
-- `0x40` Right Alt / Option (⌥)
-- `0x80` Right GUI / Command (⌘)
 
 Example `A` (press then release):
 
@@ -148,13 +178,13 @@ Example `A` (press then release):
 00 04 00 02 00  80 00 00 00 00
 ```
 
-Example `Fn+K` (press then release, Apple Fn flag set):
+Example `Fn+K` (press then release; Apple Fn flag set):
 
 ```
 00 0E 00 00 01  80 00 00 00 00
 ```
 
-Example `Fn` only (press then release, no keycode):
+Example `Fn` only (press then release; no keycode):
 
 ```
 00 00 00 00 01  80 00 00 00 00
@@ -168,21 +198,6 @@ Consumer volume increment (usage `0x00E9`):
 
 UART TX is reserved for **logs only**. The device never sends protocol bytes back,
 so the host can safely read TX output as plain text logs.
-
-## Backend daemon
-
-The Go HTTP daemon keeps a persistent UART connection to the device and exposes
-an HTTP API for sending key events. The daemon and client library live in the
-`keybridged` repo, which also hosts the HTTP API docs and examples:
-https://github.com/2opremio/keybridged
-Note: keybridged defaults target the Nordic CDC VID/PID (`0x1915`/`0x520F`);
-for the FT232 adapter used with the example hardware, pass
-`-vid 0x0403 -pid 0x6001`.
-
-## Bluetooth variant
-
-For a BLE HID version of this bridge (USB CDC -> BLE keyboard), see:
-https://github.com/2opremio/NordicBTKeyBridge
 
 ## UART configuration
 
