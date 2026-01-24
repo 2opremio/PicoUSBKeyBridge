@@ -24,10 +24,8 @@ void log_write_line(const char *level, const char *format, ...);
 #define LOG_ERROR(...) log_write_line("ERROR: ", __VA_ARGS__)
 #if PUSBKB_DEBUG
 #define LOG_DEBUG(...) log_write_line("DEBUG: ", __VA_ARGS__)
-#define LOG_DEBUG_PKT(a, b) LOG_DEBUG("rx %02X %02X", (a), (b))
 #else
 #define LOG_DEBUG(...) do {} while (0)
-#define LOG_DEBUG_PKT(a, b) do {} while (0)
 #endif
 
 // TinyUSB debug printf hook (used by CFG_TUSB_DEBUG_PRINTF)

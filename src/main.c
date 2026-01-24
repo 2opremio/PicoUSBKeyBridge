@@ -177,6 +177,11 @@ static void uart_handle_input(uart_rx_state_t *state) {
         break;
       case RX_MODE_FLAGS: {
         state->pending_flags = byte;
+        uint16_t code = ((uint16_t)state->pending_code_hi << 8) |
+                        state->pending_code_lo;
+        LOG_DEBUG("Serial pkt: type=0x%02x code=0x%04x mod=0x%02x flags=0x%02x",
+                  state->pending_type, code, state->pending_modifier,
+                  state->pending_flags);
         uint64_t packed = ((uint64_t)state->pending_type << 32) |
                           ((uint64_t)state->pending_flags << 24) |
                           ((uint64_t)state->pending_modifier << 16) |
@@ -279,7 +284,6 @@ static void hid_queue_task(void) {
         tud_hid_n_report(PUSBKB_HID_ITF_KEYBOARD, 0, &report, sizeof(report));
         return;
       }
-      LOG_DEBUG_PKT((uint8_t)pending_key.keycode, pending_key.modifier);
       pending_stage = 1;
       return;
     }
