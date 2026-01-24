@@ -123,7 +123,7 @@ curl -X POST "http://localhost:8080/pressandrelease" \
   -d '{"type":"keyboard","code":4,"modifiers":{"left_shift":true}}'
 ```
 
-## Serial protocol (single source of truth)
+## Serial protocol
 
 The UART interface uses a fixed 5-byte packet format. UART is 115200 baud by default.
 
