@@ -48,6 +48,8 @@ moved to TinyUSB over USB-C for HID and used the UART adapter for control/loggin
 
 ## Build
 
+If you use the example Waveshare RP2350-USB-A board, a prebuilt `WaveshareRP2350-USB-A.uf2` is available in the [latest release](https://github.com/2opremio/PicoUSBKeyBridge/releases/latest). It only works for the default Waveshare setup; for other boards or pin mappings, build from source.
+
 1. Install toolchain dependencies:
    - CMake
    - Ninja
