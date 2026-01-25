@@ -112,7 +112,7 @@ It keeps a persistent UART connection to the bridge and exposes a small HTTP API
 Example (FT232 adapter):
 
 ```
-go run ./cmd/keybridged -vid 0x0403 -pid 0x6001
+github.com/2opremio/keybridged/cmd@latest -vid 0x0403 -pid 0x6001
 ```
 
 Quick test (send `A` = HID code 4 + Shift):
