@@ -48,12 +48,9 @@ moved to TinyUSB over USB-C for HID and used the UART adapter for control/loggin
 
 ## Build
 
-If you use the example Waveshare RP2350-USB-A board, a prebuilt `WaveshareRP2350-USB-A.uf2` is available in the [latest release](https://github.com/2opremio/PicoUSBKeyBridge/releases/latest). It only works for the default Waveshare setup; for other boards or pin mappings, build from source.
+If you use the example Waveshare RP2350-USB-A board, a prebuilt `WaveshareRP2350-USB-A.uf2` is available in the [latest release](https://github.com/2opremio/PicoUSBKeyBridge/releases/latest). To build from source:
 
-1. Install toolchain dependencies:
-   - CMake
-   - Ninja
-   - GNU Arm Embedded toolchain (`arm-none-eabi-gcc`)
+1. Install toolchain dependencies: CMake, Ninja, GNU Arm Embedded toolchain (`arm-none-eabi-gcc`)
 
 2. Initialize submodules:
 ```
@@ -62,8 +59,20 @@ git submodule update --init --recursive
 
 3. Configure:
 ```
-cmake -S . -B build
+cmake -S . -B build \
+  -DPICO_BOARD=waveshare_rp2350_usb_a \
+  -DPICO_PLATFORM=rp2350-arm-s \
+  -DPUSBKB_UART_INDEX=1 \
+  -DPUSBKB_UART_TX_PIN=4 \
+  -DPUSBKB_UART_RX_PIN=5
 ```
+
+Configuration options:
+- `PICO_BOARD`: Board name (default: `waveshare_rp2350_usb_a`)
+- `PICO_PLATFORM`: Platform/chip (default: `rp2350-arm-s` for RP2350, `rp2040` for RP2040)
+- `PUSBKB_UART_INDEX`: UART instance index (0 or 1, default: 1)
+- `PUSBKB_UART_TX_PIN`: GPIO pin for UART TX (default: 4)
+- `PUSBKB_UART_RX_PIN`: GPIO pin for UART RX (default: 5)
 
 4. Build:
 ```
@@ -71,6 +80,7 @@ cmake --build build
 ```
 
 UF2 output is in `build/` (e.g. `build/PicoUSBKeyBridge.uf2`).
+
 
 ## Flash
 
@@ -89,8 +99,6 @@ Default UART wiring (configurable):
 - Adapter **RX** → `GPIO4` (UART TX)
 - Adapter **TX** → `GPIO5` (UART RX)
 - Adapter **GND** → any **GND** on the board
-
-See `UART configuration` below to change the pin mapping.
 
 ## Device identity (serial vs keyboard)
 
@@ -211,18 +219,6 @@ Consumer volume increment (usage `0x00E9`):
 
 UART TX is reserved for **logs only**. The device never sends protocol bytes back,
 so the host can safely read TX output as plain text logs.
-
-## UART configuration
-
-Override UART pins/baud rate at build time:
-
-```
-cmake -S . -B build \
-  -DPUSBKB_UART_INDEX=1 \
-  -DPUSBKB_UART_TX_PIN=4 \
-  -DPUSBKB_UART_RX_PIN=5 \
-  -DPUSBKB_UART_BAUDRATE=115200
-```
 
 ## Porting
 
