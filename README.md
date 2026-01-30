@@ -128,7 +128,7 @@ go run github.com/2opremio/keybridged/cmd/keybridged@latest -vid 0x0403 -pid 0x6
 Quick test (send `A` = HID code 4 + Shift):
 
 ```
-curl -X POST "http://localhost:8080/pressandrelease" \
+curl -X POST "http://localhost:9876/pressandrelease" \
   -H "Content-Type: application/json" \
   -d '{"type":"keyboard","code":4,"modifiers":{"left_shift":true}}'
 ```
